@@ -91,10 +91,39 @@
       text-decoration:underline;
     }
 
+    /* Header */
+.header{
+  position:fixed;
+  top:0;
+  left:0;
+  width:100%;
+  background:#fff;
+  padding:14px 24px;
+  display:flex;
+  align-items:center;
+  border-bottom:1px solid #e5e7eb;
+  z-index:1000;
+}
+
+.logo{
+  font-weight:800;
+  font-size:20px;
+  color:#04469B;
+}
+
+/* Push page down so header doesn't cover content */
+body{
+  padding-top:70px;
+}
+
   </style>
 </head>
 
 <body>
+
+  <div class="header">
+  <div class="logo">BlueVera</div>
+</div>
 
   <div class="container">
 
