@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BlueVera | Home Intelligence</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bv-blue:#04469B;
+      --bv-blue-dark:#033A82;
+      --bv-text:#0b1b44;
+      --bv-muted:#6b7280;
+    }
+
+    body{
+      margin:0;
+      font-family:'Montserrat', sans-serif;
+      background:linear-gradient(rgba(4,70,155,0.85), rgba(4,70,155,0.85)),
+                 url('images/homecollage.png') center/cover no-repeat;
+      color:#fff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      height:100vh;
+    }
+
+    .container{
+      text-align:center;
+      max-width:420px;
+      padding:30px;
+      background:rgba(255,255,255,0.1);
+      backdrop-filter:blur(10px);
+      border-radius:16px;
+      box-shadow:0 20px 40px rgba(0,0,0,0.2);
+    }
+
+    .logo{
+      font-size:22px;
+      font-weight:800;
+      margin-bottom:20px;
+    }
+
+    h1{
+      font-size:26px;
+      margin-bottom:12px;
+    }
+
+    p{
+      font-size:14px;
+      color:#e5e7eb;
+      margin-bottom:25px;
+    }
+
+    input{
+      width:100%;
+      padding:12px;
+      border-radius:8px;
+      border:none;
+      margin-bottom:12px;
+      font-size:14px;
+    }
+
+    .btn{
+      width:100%;
+      background:#fff;
+      color:var(--bv-blue);
+      padding:12px;
+      border:none;
+      border-radius:8px;
+      font-weight:700;
+      cursor:pointer;
+      transition:all 0.2s ease;
+    }
+
+    .btn:hover{
+      background:#f1f5f9;
+      transform:translateY(-1px);
+    }
+
+    .secondary{
+      margin-top:15px;
+      font-size:13px;
+    }
+
+    .secondary a{
+      color:#fff;
+      font-weight:600;
+      text-decoration:underline;
+    }
+
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+
+    <div class="logo">BlueVera</div>
+
+    <h1>Login to Your Home Intelligence Account</h1>
+
+    <p>
+      Access your home dashboard, track maintenance, and keep your property record up to date.
+    </p>
+
+    <!-- Simple email entry (beta style) -->
+    <form onsubmit="redirectToDashboard(event)">
+      <input type="email" id="email" placeholder="Enter your email" required>
+
+      <button class="btn" type="submit">
+        Open Home Intelligence
+      </button>
+    </form>
+
+    <div class="secondary">
+      New here? 
+      <a href="https://bluevera.org/homeowner-signup.html">
+        Start your Home Intelligence System
+      </a>
+    </div>
+
+  </div>
+
+  <script>
+    function redirectToDashboard(e){
+      e.preventDefault();
+
+      const email = document.getElementById("email").value;
+
+      window.location.href =
+        "https://bluevera.org/homeowner-signup.html?email=" +
+        encodeURIComponent(email);
+    }
+  </script>
+
+</body>
+</html>
