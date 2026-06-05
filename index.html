@@ -59,11 +59,11 @@
     }
 
     .logo-wrap img{
-  height:110px;
-  width:auto;
-  display:block;
-  object-fit:contain;
-}
+      height:82px;
+      width:auto;
+      display:block;
+      object-fit:contain;
+    }
 
     .eyebrow{
       text-align:center;
@@ -156,6 +156,12 @@
       transform:translateY(-1px);
     }
 
+    .login-btn:disabled{
+      opacity:.65;
+      cursor:not-allowed;
+      transform:none;
+    }
+
     .error{
       display:none;
       margin-top:14px;
@@ -204,8 +210,8 @@
       </p>
 
       <form id="adminLoginForm">
-        <label for="adminUsername">Username</label>
-        <input id="adminUsername" type="text" placeholder="Enter admin username" autocomplete="username" required>
+        <label for="adminEmail">Email</label>
+        <input id="adminEmail" type="email" placeholder="Enter admin email" autocomplete="username" required>
 
         <label for="adminPassword">Password</label>
         <div class="password-wrap">
@@ -213,10 +219,10 @@
           <button class="eye-btn" type="button" onclick="togglePassword()" aria-label="Show or hide password">👁</button>
         </div>
 
-        <button class="login-btn" type="submit">Log In</button>
+        <button class="login-btn" id="loginBtn" type="submit">Log In</button>
 
         <div id="loginError" class="error">
-          Incorrect admin username or password.
+          Login failed. Check your email/password or admin approval status.
         </div>
       </form>
 
@@ -227,11 +233,15 @@
     </section>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
   <script>
-    const ADMIN_USERNAME = "russ";
-    const ADMIN_PASSWORD = "ChangeThisPassword123";
+    const SUPABASE_URL = "https://evcvpuclrmywdqqakrik.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_1PE2I1AJDSD9M8xvbRaWxw_cu1eN8an";
 
     const ADMIN_TARGET_URL = "https://bluevera.org/admin-listing-intake.html";
+
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     function togglePassword(){
       const input = document.getElementById("adminPassword");
@@ -240,18 +250,73 @@
       input.type = input.type === "password" ? "text" : "password";
     }
 
-    document.getElementById("adminLoginForm").addEventListener("submit", function(e){
+    function showError(message){
+      const error = document.getElementById("loginError");
+      error.textContent = message || "Login failed. Check your email/password or admin approval status.";
+      error.style.display = "block";
+    }
+
+    function hideError(){
+      const error = document.getElementById("loginError");
+      error.style.display = "none";
+    }
+
+    document.getElementById("adminLoginForm").addEventListener("submit", async function(e){
       e.preventDefault();
 
-      const username = document.getElementById("adminUsername").value.trim();
+      const email = document.getElementById("adminEmail").value.trim().toLowerCase();
       const password = document.getElementById("adminPassword").value.trim();
-      const error = document.getElementById("loginError");
+      const loginBtn = document.getElementById("loginBtn");
 
-      if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+      hideError();
+
+      if (!email || !password) {
+        showError("Please enter your admin email and password.");
+        return;
+      }
+
+      loginBtn.disabled = true;
+      loginBtn.textContent = "Checking...";
+
+      try {
+        const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
+          email: email,
+          password: password
+        });
+
+        if (authError || !authData || !authData.user) {
+          showError("Incorrect email or password.");
+          loginBtn.disabled = false;
+          loginBtn.textContent = "Log In";
+          return;
+        }
+
+        const { data: adminRow, error: adminError } = await supabaseClient
+          .from("admin_users")
+          .select("email, role, is_active")
+          .eq("email", email)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (adminError || !adminRow) {
+          await supabaseClient.auth.signOut();
+          showError("This account is not approved for BlueVera admin access.");
+          loginBtn.disabled = false;
+          loginBtn.textContent = "Log In";
+          return;
+        }
+
         sessionStorage.setItem("blueveraAdminLoggedIn", "true");
+        sessionStorage.setItem("blueveraAdminEmail", adminRow.email);
+        sessionStorage.setItem("blueveraAdminRole", adminRow.role);
+
         window.location.href = ADMIN_TARGET_URL;
-      } else {
-        error.style.display = "block";
+
+      } catch (err) {
+        console.error(err);
+        showError("Something went wrong. Please try again.");
+        loginBtn.disabled = false;
+        loginBtn.textContent = "Log In";
       }
     });
   </script>
