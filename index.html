@@ -18,6 +18,8 @@
       --muted:#667085;
       --red:#c0342b;
       --red-bg:#fff1f0;
+      --green:#137a37;
+      --green-bg:#ecfbf2;
     }
 
     *{
@@ -175,6 +177,19 @@
       line-height:1.4;
     }
 
+    .success{
+      display:none;
+      margin-top:14px;
+      padding:12px;
+      border-radius:12px;
+      background:var(--green-bg);
+      border:1px solid #b7e8c6;
+      color:var(--green);
+      font-size:13px;
+      font-weight:800;
+      line-height:1.4;
+    }
+
     .footer-note{
       margin-top:16px;
       text-align:center;
@@ -192,6 +207,10 @@
     .footer-note a:hover{
       text-decoration:underline;
     }
+
+    .hidden{
+      display:none;
+    }
   </style>
 </head>
 
@@ -202,13 +221,14 @@
         <img src="admin-bluevera-logo.png" alt="BlueVera Admin">
       </div>
 
-      <div class="eyebrow">Restricted Access</div>
-      <h1>BlueVera Admin Login</h1>
+      <div class="eyebrow" id="eyebrowText">Restricted Access</div>
+      <h1 id="pageTitle">BlueVera Admin Login</h1>
 
-      <p class="subtext">
+      <p class="subtext" id="pageSubtext">
         Use this page to access the BlueVera admin listing intake system.
       </p>
 
+      <!-- NORMAL LOGIN FORM -->
       <form id="adminLoginForm">
         <label for="adminEmail">Email</label>
         <input id="adminEmail" type="email" placeholder="Enter admin email" autocomplete="username" required>
@@ -216,7 +236,7 @@
         <label for="adminPassword">Password</label>
         <div class="password-wrap">
           <input id="adminPassword" type="password" placeholder="Enter admin password" autocomplete="current-password" required>
-          <button class="eye-btn" type="button" onclick="togglePassword()" aria-label="Show or hide password">👁</button>
+          <button class="eye-btn" type="button" onclick="togglePassword('adminPassword')" aria-label="Show or hide password">👁</button>
         </div>
 
         <button class="login-btn" id="loginBtn" type="submit">Log In</button>
@@ -224,6 +244,26 @@
         <div id="loginError" class="error">
           Login failed. Check your email/password or admin approval status.
         </div>
+      </form>
+
+      <!-- PASSWORD RESET FORM -->
+      <form id="resetPasswordForm" class="hidden">
+        <label for="newPassword">New Password</label>
+        <div class="password-wrap">
+          <input id="newPassword" type="password" placeholder="Enter new password" autocomplete="new-password" required>
+          <button class="eye-btn" type="button" onclick="togglePassword('newPassword')" aria-label="Show or hide password">👁</button>
+        </div>
+
+        <label for="confirmPassword">Confirm New Password</label>
+        <div class="password-wrap">
+          <input id="confirmPassword" type="password" placeholder="Confirm new password" autocomplete="new-password" required>
+          <button class="eye-btn" type="button" onclick="togglePassword('confirmPassword')" aria-label="Show or hide password">👁</button>
+        </div>
+
+        <button class="login-btn" id="resetBtn" type="submit">Update Password</button>
+
+        <div id="resetError" class="error"></div>
+        <div id="resetSuccess" class="success"></div>
       </form>
 
       <div class="footer-note">
@@ -243,22 +283,88 @@
 
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    function togglePassword(){
-      const input = document.getElementById("adminPassword");
+    function togglePassword(inputId){
+      const input = document.getElementById(inputId);
       if (!input) return;
-
       input.type = input.type === "password" ? "text" : "password";
     }
 
-    function showError(message){
+    function showLoginError(message){
       const error = document.getElementById("loginError");
       error.textContent = message || "Login failed. Check your email/password or admin approval status.";
       error.style.display = "block";
     }
 
-    function hideError(){
-      const error = document.getElementById("loginError");
-      error.style.display = "none";
+    function hideLoginError(){
+      document.getElementById("loginError").style.display = "none";
+    }
+
+    function showResetError(message){
+      const error = document.getElementById("resetError");
+      error.textContent = message || "Password reset failed.";
+      error.style.display = "block";
+    }
+
+    function hideResetError(){
+      document.getElementById("resetError").style.display = "none";
+    }
+
+    function showResetSuccess(message){
+      const box = document.getElementById("resetSuccess");
+      box.textContent = message || "Password updated.";
+      box.style.display = "block";
+    }
+
+    function showLoginMode(){
+      document.getElementById("eyebrowText").textContent = "Restricted Access";
+      document.getElementById("pageTitle").textContent = "BlueVera Admin Login";
+      document.getElementById("pageSubtext").textContent = "Use this page to access the BlueVera admin listing intake system.";
+
+      document.getElementById("adminLoginForm").classList.remove("hidden");
+      document.getElementById("resetPasswordForm").classList.add("hidden");
+    }
+
+    function showResetMode(){
+      document.getElementById("eyebrowText").textContent = "Password Reset";
+      document.getElementById("pageTitle").textContent = "Set New Admin Password";
+      document.getElementById("pageSubtext").textContent = "Enter a new password for your BlueVera admin account.";
+
+      document.getElementById("adminLoginForm").classList.add("hidden");
+      document.getElementById("resetPasswordForm").classList.remove("hidden");
+    }
+
+    async function checkAdminAccess(email){
+      const cleanEmail = String(email || "").trim().toLowerCase();
+
+      const { data: adminRow, error: adminError } = await supabaseClient
+        .from("admin_users")
+        .select("email, role, is_active")
+        .eq("email", cleanEmail)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (adminError || !adminRow) {
+        return null;
+      }
+
+      return adminRow;
+    }
+
+    async function finishAdminLogin(email){
+      const adminRow = await checkAdminAccess(email);
+
+      if (!adminRow) {
+        await supabaseClient.auth.signOut();
+        showLoginError("This account is not approved for BlueVera admin access.");
+        return false;
+      }
+
+      sessionStorage.setItem("blueveraAdminLoggedIn", "true");
+      sessionStorage.setItem("blueveraAdminEmail", adminRow.email);
+      sessionStorage.setItem("blueveraAdminRole", adminRow.role);
+
+      window.location.href = ADMIN_TARGET_URL;
+      return true;
     }
 
     document.getElementById("adminLoginForm").addEventListener("submit", async function(e){
@@ -268,10 +374,10 @@
       const password = document.getElementById("adminPassword").value.trim();
       const loginBtn = document.getElementById("loginBtn");
 
-      hideError();
+      hideLoginError();
 
       if (!email || !password) {
-        showError("Please enter your admin email and password.");
+        showLoginError("Please enter your admin email and password.");
         return;
       }
 
@@ -285,40 +391,109 @@
         });
 
         if (authError || !authData || !authData.user) {
-          showError("Incorrect email or password.");
+          showLoginError("Incorrect email or password.");
           loginBtn.disabled = false;
           loginBtn.textContent = "Log In";
           return;
         }
 
-        const { data: adminRow, error: adminError } = await supabaseClient
-          .from("admin_users")
-          .select("email, role, is_active")
-          .eq("email", email)
-          .eq("is_active", true)
-          .maybeSingle();
+        const allowed = await finishAdminLogin(email);
 
-        if (adminError || !adminRow) {
-          await supabaseClient.auth.signOut();
-          showError("This account is not approved for BlueVera admin access.");
+        if (!allowed) {
           loginBtn.disabled = false;
           loginBtn.textContent = "Log In";
-          return;
         }
-
-        sessionStorage.setItem("blueveraAdminLoggedIn", "true");
-        sessionStorage.setItem("blueveraAdminEmail", adminRow.email);
-        sessionStorage.setItem("blueveraAdminRole", adminRow.role);
-
-        window.location.href = ADMIN_TARGET_URL;
 
       } catch (err) {
         console.error(err);
-        showError("Something went wrong. Please try again.");
+        showLoginError("Something went wrong. Please try again.");
         loginBtn.disabled = false;
         loginBtn.textContent = "Log In";
       }
     });
+
+    document.getElementById("resetPasswordForm").addEventListener("submit", async function(e){
+      e.preventDefault();
+
+      const newPassword = document.getElementById("newPassword").value.trim();
+      const confirmPassword = document.getElementById("confirmPassword").value.trim();
+      const resetBtn = document.getElementById("resetBtn");
+
+      hideResetError();
+      document.getElementById("resetSuccess").style.display = "none";
+
+      if (!newPassword || !confirmPassword) {
+        showResetError("Please enter and confirm your new password.");
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        showResetError("Password must be at least 8 characters.");
+        return;
+      }
+
+      if (newPassword !== confirmPassword) {
+        showResetError("Passwords do not match.");
+        return;
+      }
+
+      resetBtn.disabled = true;
+      resetBtn.textContent = "Updating...";
+
+      try {
+        const { data, error } = await supabaseClient.auth.updateUser({
+          password: newPassword
+        });
+
+        if (error) {
+          showResetError(error.message || "Could not update password.");
+          resetBtn.disabled = false;
+          resetBtn.textContent = "Update Password";
+          return;
+        }
+
+        showResetSuccess("Password updated successfully. You can now log in.");
+
+        await supabaseClient.auth.signOut();
+
+        setTimeout(function(){
+          window.location.href = "https://bluevera.app";
+        }, 1600);
+
+      } catch (err) {
+        console.error(err);
+        showResetError("Something went wrong. Please try again.");
+        resetBtn.disabled = false;
+        resetBtn.textContent = "Update Password";
+      }
+    });
+
+    async function init(){
+      const hash = window.location.hash || "";
+      const search = window.location.search || "";
+      const urlText = hash + search;
+
+      if (
+        urlText.includes("type=recovery") ||
+        urlText.includes("access_token=") ||
+        urlText.includes("refresh_token=")
+      ) {
+        showResetMode();
+
+        setTimeout(async function(){
+          const { data } = await supabaseClient.auth.getSession();
+          if (!data || !data.session) {
+            showResetError("Reset session not found or expired. Please send a new password recovery email.");
+          }
+        }, 600);
+
+        return;
+      }
+
+      showLoginMode();
+    }
+
+    init();
   </script>
 </body>
 </html>
