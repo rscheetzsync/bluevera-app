@@ -1,169 +1,266 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BlueVera | Home Intelligence</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlueVera Admin Login</title>
 
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="blue-check.png">
 
   <style>
     :root{
-      --bv-blue:#04469B;
-      --bv-blue-dark:#033A82;
-      --bv-text:#0b1b44;
-      --bv-muted:#6b7280;
+      --blue:#04469B;
+      --blue-dark:#033A82;
+      --bg:#f4f7fb;
+      --card:#ffffff;
+      --line:#dbe6f5;
+      --text:#0b1b44;
+      --muted:#667085;
+      --red:#c0342b;
+      --red-bg:#fff1f0;
+    }
+
+    *{
+      box-sizing:border-box;
     }
 
     body{
       margin:0;
-      font-family:'Montserrat', sans-serif;
-      background:linear-gradient(rgba(4,70,155,0.85), rgba(4,70,155,0.85)),
-                 url('images/homecollage.png') center/cover no-repeat;
-      color:#fff;
+      min-height:100vh;
+      font-family:Arial, Helvetica, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(4,70,155,0.13), transparent 32%),
+        linear-gradient(135deg, #f5f8fc 0%, #eaf1fb 100%);
+      color:var(--text);
       display:flex;
       align-items:center;
       justify-content:center;
-      height:100vh;
+      padding:24px;
     }
 
-    .container{
-      text-align:center;
-      max-width:420px;
+    .login-shell{
+      width:100%;
+      max-width:430px;
+    }
+
+    .login-card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:22px;
       padding:30px;
-      background:rgba(255,255,255,0.1);
-      backdrop-filter:blur(10px);
-      border-radius:16px;
-      box-shadow:0 20px 40px rgba(0,0,0,0.2);
+      box-shadow:0 18px 45px rgba(15, 23, 42, 0.12);
     }
 
-    .logo{
-      font-size:22px;
-      font-weight:800;
-      margin-bottom:20px;
+    .logo-wrap{
+      display:flex;
+      justify-content:center;
+      margin-bottom:22px;
+    }
+
+    .logo-wrap img{
+      height:42px;
+      width:auto;
+      display:block;
+    }
+
+    .eyebrow{
+      text-align:center;
+      font-size:12px;
+      font-weight:900;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:var(--blue);
+      margin-bottom:8px;
     }
 
     h1{
-      font-size:26px;
-      margin-bottom:12px;
+      margin:0;
+      text-align:center;
+      font-size:28px;
+      line-height:1.15;
+      font-weight:900;
+      color:var(--text);
     }
 
-    p{
+    .subtext{
+      margin:12px 0 24px;
+      text-align:center;
       font-size:14px;
-      color:#e5e7eb;
-      margin-bottom:25px;
+      line-height:1.45;
+      color:var(--muted);
+      font-weight:650;
+    }
+
+    label{
+      display:block;
+      font-size:12px;
+      font-weight:900;
+      margin:14px 0 6px;
+      color:#344054;
     }
 
     input{
       width:100%;
-      padding:12px;
-      border-radius:8px;
-      border:none;
-      margin-bottom:12px;
+      border:1px solid #cfd9eb;
+      border-radius:12px;
+      padding:13px 14px;
       font-size:14px;
-    }
-
-    .btn{
-      width:100%;
+      outline:none;
       background:#fff;
-      color:var(--bv-blue);
-      padding:12px;
-      border:none;
-      border-radius:8px;
-      font-weight:700;
-      cursor:pointer;
-      transition:all 0.2s ease;
     }
 
-    .btn:hover{
-      background:#f1f5f9;
+    input:focus{
+      border-color:var(--blue);
+      box-shadow:0 0 0 3px rgba(4,70,155,0.10);
+    }
+
+    .password-wrap{
+      position:relative;
+    }
+
+    .password-wrap input{
+      padding-right:48px;
+    }
+
+    .eye-btn{
+      position:absolute;
+      right:10px;
+      top:50%;
+      transform:translateY(-50%);
+      border:0;
+      background:transparent;
+      cursor:pointer;
+      font-size:16px;
+      padding:6px;
+      color:#475467;
+    }
+
+    .login-btn{
+      width:100%;
+      margin-top:22px;
+      border:0;
+      border-radius:12px;
+      background:var(--blue);
+      color:#fff;
+      padding:13px 16px;
+      font-size:14px;
+      font-weight:900;
+      cursor:pointer;
+      transition:.2s ease;
+    }
+
+    .login-btn:hover{
+      background:var(--blue-dark);
       transform:translateY(-1px);
     }
 
-    .secondary{
-      margin-top:15px;
+    .error{
+      display:none;
+      margin-top:14px;
+      padding:12px;
+      border-radius:12px;
+      background:var(--red-bg);
+      border:1px solid #f3b9b3;
+      color:var(--red);
       font-size:13px;
+      font-weight:800;
+      line-height:1.4;
     }
 
-    .secondary a{
-      color:#fff;
-      font-weight:600;
+    .footer-note{
+      margin-top:16px;
+      text-align:center;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.4;
+    }
+
+    .footer-note a{
+      color:var(--blue);
+      font-weight:900;
+      text-decoration:none;
+    }
+
+    .footer-note a:hover{
       text-decoration:underline;
     }
-
-    /* Header */
-.header{
-  position:fixed;
-  top:0;
-  left:0;
-  width:100%;
-  background:#fff;
-  padding:14px 24px;
-  display:flex;
-  align-items:center;
-  border-bottom:1px solid #e5e7eb;
-  z-index:1000;
-}
-
-.logo{
-  font-weight:800;
-  font-size:20px;
-  color:#04469B;
-}
-
-/* Push page down so header doesn't cover content */
-body{
-  padding-top:70px;
-}
-
   </style>
 </head>
 
 <body>
+  <main class="login-shell">
+    <section class="login-card">
+      <div class="logo-wrap">
+        <img src="logo.png" alt="BlueVera">
+      </div>
 
-  <div class="header">
-  <div class="logo">BlueVera</div>
-</div>
+      <div class="eyebrow">Restricted Access</div>
+      <h1>BlueVera Admin Login</h1>
 
-  <div class="container">
+      <p class="subtext">
+        Use this page to access the BlueVera admin listing intake system.
+      </p>
 
-    <div class="logo">BlueVera</div>
+      <form id="adminLoginForm">
+        <label for="adminUsername">Username</label>
+        <input id="adminUsername" type="text" placeholder="Enter admin username" autocomplete="username" required>
 
-    <h1>Login to Your Home Intelligence Account</h1>
+        <label for="adminPassword">Password</label>
+        <div class="password-wrap">
+          <input id="adminPassword" type="password" placeholder="Enter admin password" autocomplete="current-password" required>
+          <button class="eye-btn" type="button" onclick="togglePassword()" aria-label="Show or hide password">👁</button>
+        </div>
 
-    <p>
-      Access your home dashboard, track maintenance, and keep your property record up to date.
-    </p>
+        <button class="login-btn" type="submit">Log In</button>
 
-    <!-- Simple email entry (beta style) -->
-    <form onsubmit="redirectToDashboard(event)">
-      <input type="email" id="email" placeholder="Enter your email" required>
+        <div id="loginError" class="error">
+          Incorrect admin username or password.
+        </div>
+      </form>
 
-      <button class="btn" type="submit">
-        Open Home Intelligence
-      </button>
-    </form>
-
-    <div class="secondary">
-      New here? 
-      <a href="https://bluevera.org/homeowner-signup.html">
-        Start your Home Intelligence System
-      </a>
-    </div>
-
-  </div>
+      <div class="footer-note">
+        BlueVera internal admin tool<br>
+        <a href="https://bluevera.org">Back to BlueVera</a>
+      </div>
+    </section>
+  </main>
 
   <script>
-    function redirectToDashboard(e){
+    /*
+      Change these before publishing.
+      This is simple front-end protection for now.
+      Later, move this to Supabase authentication.
+    */
+    const ADMIN_USERNAME = "russ";
+    const ADMIN_PASSWORD = "ChangeThisPassword123";
+
+    /*
+      This keeps the working admin intake on bluevera.org.
+      That way your current API/Supabase save flow should keep working.
+    */
+    const ADMIN_TARGET_URL = "https://bluevera.org/admin-listing-intake.html";
+
+    function togglePassword(){
+      const input = document.getElementById("adminPassword");
+      if (!input) return;
+
+      input.type = input.type === "password" ? "text" : "password";
+    }
+
+    document.getElementById("adminLoginForm").addEventListener("submit", function(e){
       e.preventDefault();
 
-      const email = document.getElementById("email").value;
+      const username = document.getElementById("adminUsername").value.trim();
+      const password = document.getElementById("adminPassword").value.trim();
+      const error = document.getElementById("loginError");
 
-      window.location.href =
-        "https://bluevera.org/homeowner-signup.html?email=" +
-        encodeURIComponent(email);
-    }
+      if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+        sessionStorage.setItem("blueveraAdminLoggedIn", "true");
+        window.location.href = ADMIN_TARGET_URL;
+      } else {
+        error.style.display = "block";
+      }
+    });
   </script>
-
 </body>
 </html>
