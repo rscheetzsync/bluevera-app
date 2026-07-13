@@ -1,0 +1,1999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlueVera Agent CRM</title>
+
+  <style>
+    :root{
+      --navy:#082f63;
+      --blue:#0a7ff2;
+      --blue-dark:#0754ad;
+      --page:#eef4fb;
+      --card:#ffffff;
+      --text:#13233f;
+      --muted:#617089;
+      --border:#d6e2f0;
+      --green:#16864b;
+      --green-bg:#eaf8f0;
+      --gold:#a86c00;
+      --gold-bg:#fff7df;
+      --red:#c43b3b;
+      --red-bg:#fff2f2;
+      --shadow:0 10px 26px rgba(18,54,94,.08);
+    }
+
+    *{box-sizing:border-box}
+
+    body{
+      margin:0;
+      font-family:Arial,Helvetica,sans-serif;
+      background:var(--page);
+      color:var(--text);
+    }
+
+    .topbar{
+      min-height:76px;
+      background:#fff;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:18px;
+      padding:14px 24px;
+      position:sticky;
+      top:0;
+      z-index:20;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:16px;
+    }
+
+    .logo{
+      font-weight:900;
+      color:var(--navy);
+      letter-spacing:.4px;
+      white-space:nowrap;
+    }
+
+    .logo span{
+      color:var(--blue);
+      font-size:20px;
+      margin-right:5px;
+    }
+
+    .title h1{
+      margin:0;
+      color:var(--navy);
+      font-size:21px;
+    }
+
+    .title p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    .top-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+
+    .btn{
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:#fff;
+      color:var(--navy);
+      padding:10px 15px;
+      font-weight:800;
+      font-size:13px;
+      cursor:pointer;
+      text-decoration:none;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:7px;
+    }
+
+    .btn-primary{
+      background:var(--blue-dark);
+      border-color:var(--blue-dark);
+      color:#fff;
+    }
+
+    .btn-danger{
+      color:var(--red);
+      border-color:#efc3c3;
+      background:#fff7f7;
+    }
+
+    main{
+      max-width:1380px;
+      margin:0 auto;
+      padding:28px 20px 52px;
+    }
+
+    .hero{
+      background:linear-gradient(135deg,var(--navy),#0d63b3);
+      color:#fff;
+      border-radius:18px;
+      padding:24px 26px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:20px;
+      box-shadow:var(--shadow);
+      margin-bottom:22px;
+    }
+
+    .hero h2{
+      margin:0 0 7px;
+      font-size:26px;
+    }
+
+    .hero p{
+      margin:0;
+      color:#d8e9fb;
+      font-size:14px;
+    }
+
+    .hero .btn{
+      background:#fff;
+      border-color:#fff;
+      color:var(--navy);
+      min-width:145px;
+    }
+
+    .stats{
+      display:grid;
+      grid-template-columns:repeat(5,minmax(0,1fr));
+      gap:14px;
+      margin-bottom:22px;
+    }
+
+    .stat{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:16px;
+      box-shadow:var(--shadow);
+    }
+
+    .stat .label{
+      color:var(--muted);
+      font-size:12px;
+      font-weight:700;
+    }
+
+    .stat .value{
+      margin-top:8px;
+      color:var(--navy);
+      font-size:26px;
+      font-weight:900;
+    }
+
+    .toolbar{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:15px;
+      padding:15px;
+      display:grid;
+      grid-template-columns:1.5fr repeat(3,minmax(150px,.7fr));
+      gap:12px;
+      margin-bottom:16px;
+      box-shadow:var(--shadow);
+    }
+
+    input,select,textarea{
+      width:100%;
+      border:1px solid #cbd8e8;
+      border-radius:10px;
+      padding:11px 12px;
+      font-size:13px;
+      color:var(--text);
+      background:#fff;
+      outline:none;
+    }
+
+    input:focus,select:focus,textarea:focus{
+      border-color:var(--blue);
+      box-shadow:0 0 0 3px rgba(10,127,242,.10);
+    }
+
+    .table-card{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:16px;
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+
+    .table-head{
+      padding:16px 18px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+      border-bottom:1px solid var(--border);
+    }
+
+    .table-head h3{
+      margin:0;
+      font-size:18px;
+      color:var(--navy);
+    }
+
+    .table-wrap{
+      overflow:auto;
+    }
+
+    table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:1180px;
+    }
+
+    th{
+      text-align:left;
+      padding:12px 14px;
+      background:#f7faff;
+      color:#42526a;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+      border-bottom:1px solid var(--border);
+      white-space:nowrap;
+    }
+
+    td{
+      padding:14px;
+      border-bottom:1px solid #edf2f7;
+      vertical-align:top;
+      font-size:13px;
+    }
+
+    tr:hover td{
+      background:#fbfdff;
+    }
+
+    .contact-name{
+      font-weight:900;
+      color:var(--navy);
+      margin-bottom:4px;
+    }
+
+    .small{
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      padding:6px 9px;
+      font-size:11px;
+      font-weight:900;
+      white-space:nowrap;
+    }
+
+    .pill-new{background:#e9f4ff;color:#0b62b4}
+    .pill-follow{background:var(--gold-bg);color:var(--gold)}
+    .pill-meeting{background:#eee9ff;color:#6042a6}
+    .pill-interested{background:var(--green-bg);color:var(--green)}
+    .pill-signed{background:#daf6e5;color:#087a3d}
+    .pill-notnow{background:#f0f2f5;color:#657184}
+
+    .action-row{
+      display:flex;
+      gap:7px;
+    }
+
+    .icon-btn{
+      border:1px solid var(--border);
+      border-radius:8px;
+      padding:7px 9px;
+      background:#fff;
+      cursor:pointer;
+      color:var(--navy);
+      font-weight:800;
+      font-size:12px;
+    }
+
+    .empty{
+      text-align:center;
+      padding:42px 20px;
+      color:var(--muted);
+    }
+
+    .modal-backdrop{
+      position:fixed;
+      inset:0;
+      background:rgba(7,28,58,.48);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
+      z-index:50;
+    }
+
+    .modal-backdrop.open{
+      display:flex;
+    }
+
+    .modal{
+      width:100%;
+      max-width:820px;
+      max-height:92vh;
+      overflow:auto;
+      background:#fff;
+      border-radius:18px;
+      box-shadow:0 24px 65px rgba(4,25,54,.25);
+    }
+
+    .modal-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:15px;
+      padding:18px 20px;
+      border-bottom:1px solid var(--border);
+    }
+
+    .modal-header h3{
+      margin:0;
+      color:var(--navy);
+    }
+
+    .close-btn{
+      border:0;
+      background:transparent;
+      font-size:26px;
+      cursor:pointer;
+      color:#64748b;
+    }
+
+    .modal-body{
+      padding:20px;
+    }
+
+    .form-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:14px;
+    }
+
+    .field.full{
+      grid-column:1/-1;
+    }
+
+    .field label{
+      display:block;
+      font-size:12px;
+      font-weight:900;
+      color:#344054;
+      margin-bottom:6px;
+    }
+
+    textarea{
+      min-height:110px;
+      resize:vertical;
+    }
+
+    .modal-footer{
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      padding:16px 20px 20px;
+    }
+
+    .notice{
+      display:none;
+      margin-bottom:14px;
+      padding:11px 13px;
+      border-radius:10px;
+      font-size:13px;
+      font-weight:800;
+    }
+
+    .notice.show{display:block}
+    .notice.error{background:var(--red-bg);color:var(--red);border:1px solid #efbcbc}
+    .notice.success{background:var(--green-bg);color:var(--green);border:1px solid #b9e8cb}
+
+
+    .app-shell{
+      display:grid;
+      grid-template-columns:240px minmax(0,1fr);
+      min-height:100vh;
+    }
+
+    .sidebar{
+      background:#082f63;
+      color:#fff;
+      padding:20px 14px;
+      position:sticky;
+      top:0;
+      height:100vh;
+      overflow:auto;
+      z-index:30;
+    }
+
+    .sidebar-brand{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-weight:900;
+      letter-spacing:.4px;
+      padding:4px 10px 20px;
+      border-bottom:1px solid rgba(255,255,255,.14);
+      margin-bottom:18px;
+    }
+
+    .sidebar-brand span{
+      color:#36a2ff;
+      font-size:22px;
+    }
+
+    .sidebar-label{
+      padding:0 10px 8px;
+      font-size:10px;
+      font-weight:900;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#9fc2e6;
+    }
+
+    .sidebar-nav{
+      display:flex;
+      flex-direction:column;
+      gap:7px;
+    }
+
+    .sidebar-link{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      width:100%;
+      padding:11px 12px;
+      border-radius:10px;
+      color:#dcecff;
+      text-decoration:none;
+      font-size:13px;
+      font-weight:800;
+      border:1px solid transparent;
+      background:transparent;
+      cursor:pointer;
+      text-align:left;
+    }
+
+    .sidebar-link:hover{
+      background:rgba(255,255,255,.08);
+      color:#fff;
+    }
+
+    .sidebar-link.active{
+      background:#0a7ff2;
+      color:#fff;
+      box-shadow:0 8px 18px rgba(0,0,0,.16);
+    }
+
+    .sidebar-link .nav-icon{
+      width:24px;
+      height:24px;
+      display:grid;
+      place-items:center;
+      border-radius:7px;
+      background:rgba(255,255,255,.10);
+      font-size:12px;
+      flex:0 0 auto;
+    }
+
+    .content-shell{
+      min-width:0;
+    }
+
+    .mobile-menu-btn{
+      display:none;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--navy);
+      border-radius:9px;
+      padding:9px 11px;
+      font-weight:900;
+      cursor:pointer;
+    }
+
+    .section-placeholder{
+      display:none;
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:16px;
+      padding:28px;
+      box-shadow:var(--shadow);
+    }
+
+    .section-placeholder.active{
+      display:block;
+    }
+
+    .section-placeholder h2{
+      margin:0 0 8px;
+      color:var(--navy);
+    }
+
+    .section-placeholder p{
+      margin:0;
+      color:var(--muted);
+      line-height:1.5;
+    }
+
+
+    .crm-section{display:none}
+    .crm-section.active{display:block}
+
+    .section-stats{
+      display:grid;
+      grid-template-columns:repeat(5,minmax(0,1fr));
+      gap:14px;
+      margin-bottom:22px;
+    }
+
+    @media(max-width:1000px){
+      .section-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+    @media(max-width:680px){
+      .section-stats{grid-template-columns:1fr}
+    }
+
+    @media(max-width:900px){
+      .app-shell{
+        grid-template-columns:1fr;
+      }
+
+      .sidebar{
+        position:fixed;
+        left:-260px;
+        top:0;
+        width:240px;
+        transition:left .2s ease;
+        box-shadow:14px 0 30px rgba(0,0,0,.2);
+      }
+
+      .sidebar.open{
+        left:0;
+      }
+
+      .mobile-menu-btn{
+        display:inline-flex;
+      }
+    }
+
+    @media(max-width:1000px){
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .toolbar{grid-template-columns:1fr 1fr}
+    }
+
+    @media(max-width:680px){
+      .topbar{align-items:flex-start;flex-direction:column}
+      .hero{align-items:flex-start;flex-direction:column}
+      .stats{grid-template-columns:1fr}
+      .toolbar{grid-template-columns:1fr}
+      .form-grid{grid-template-columns:1fr}
+      .field.full{grid-column:auto}
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand"><span>✓</span>BLUEVERA CRM</div>
+
+      <div class="sidebar-label">Admin</div>
+      <nav class="sidebar-nav">
+        <button class="sidebar-link" data-section="admin-info">
+          <span class="nav-icon">A</span>
+          <span>Admin Info</span>
+        </button>
+
+        <button class="sidebar-link active" data-section="agents">
+          <span class="nav-icon">AG</span>
+          <span>Agents</span>
+        </button>
+
+        <button class="sidebar-link" data-section="brokerages">
+          <span class="nav-icon">B</span>
+          <span>Brokerages</span>
+        </button>
+
+        <button class="sidebar-link" data-section="contractors">
+          <span class="nav-icon">C</span>
+          <span>Contractors</span>
+        </button>
+
+        <button class="sidebar-link" data-section="inspectors">
+          <span class="nav-icon">I</span>
+          <span>Inspectors</span>
+        </button>
+
+        <button class="sidebar-link" data-section="insurance">
+          <span class="nav-icon">IN</span>
+          <span>Insurance Companies</span>
+        </button>
+
+        <button class="sidebar-link" data-section="title-companies">
+          <span class="nav-icon">T</span>
+          <span>Title Companies</span>
+        </button>
+      </nav>
+    </aside>
+
+    <div class="content-shell">
+      <header class="topbar">
+        <div class="brand">
+          <button class="mobile-menu-btn" id="mobileMenuBtn" type="button">☰</button>
+          <div class="logo"><span>✓</span>BLUEVERA</div>
+          <div class="title">
+            <h1 id="pageHeading">Agent CRM</h1>
+            <p id="pageSubheading">BlueVera outreach and relationship management</p>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <a class="btn" href="admin-dashboard.html">Admin Dashboard</a>
+          <button class="btn btn-danger" id="logoutBtn" type="button">Log Out</button>
+        </div>
+      </header>
+
+      <main>
+        <div id="agentsSection">
+    <section class="hero">
+      <div>
+        <h2>Agent Relationships</h2>
+        <p>Track every agent conversation, next follow-up, meeting, signup, and opportunity in one place.</p>
+      </div>
+      <button class="btn" id="addAgentBtn" type="button">+ Add Agent</button>
+    </section>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="label">Total Agents</div>
+        <div class="value" id="totalAgents">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Follow-Up Due</div>
+        <div class="value" id="followUpDue">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Meetings Scheduled</div>
+        <div class="value" id="meetingsScheduled">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Interested</div>
+        <div class="value" id="interestedAgents">0</div>
+      </div>
+      <div class="stat">
+        <div class="label">Signed Up</div>
+        <div class="value" id="signedUpAgents">0</div>
+      </div>
+    </section>
+
+    <section class="toolbar">
+      <input id="searchInput" type="search" placeholder="Search agent, brokerage, phone, email, or notes">
+      <select id="statusFilter">
+        <option value="">All statuses</option>
+        <option value="New Contact">New Contact</option>
+        <option value="Follow-Up Needed">Follow-Up Needed</option>
+        <option value="Information Sent">Information Sent</option>
+        <option value="Meeting Requested">Meeting Requested</option>
+        <option value="Meeting Scheduled">Meeting Scheduled</option>
+        <option value="Interested">Interested</option>
+        <option value="Signed Up">Signed Up</option>
+        <option value="Not Now">Not Now</option>
+        <option value="No Response">No Response</option>
+      </select>
+
+      <select id="sourceFilter">
+        <option value="">All sources</option>
+        <option value="Open House">Open House</option>
+        <option value="Referral">Referral</option>
+        <option value="Phoenix REALTORS">Phoenix REALTORS</option>
+        <option value="Office Meeting">Office Meeting</option>
+        <option value="Phone Call">Phone Call</option>
+        <option value="Email">Email</option>
+        <option value="Social Media">Social Media</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <select id="followUpFilter">
+        <option value="">All follow-up dates</option>
+        <option value="overdue">Overdue</option>
+        <option value="today">Due Today</option>
+        <option value="week">Due This Week</option>
+        <option value="none">No Follow-Up Set</option>
+      </select>
+    </section>
+
+    <section class="table-card">
+      <div class="table-head">
+        <h3>Agent Contacts</h3>
+        <span class="small" id="recordCount">0 records</span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Brokerage</th>
+              <th>Contact</th>
+              <th>Status</th>
+              <th>Last Contact</th>
+              <th>Next Follow-Up</th>
+              <th>Source</th>
+              <th>Signup</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="agentTableBody"></tbody>
+        </table>
+
+        <div class="empty" id="emptyState">
+          No agents have been added yet. Click <strong>Add Agent</strong> to create your first contact.
+        </div>
+      </div>
+
+    </section>
+        </div>
+
+        <div id="brokeragesSection" class="crm-section">
+          <section class="hero">
+            <div>
+              <h2>Brokerage Relationships</h2>
+              <p>Track offices, owners, managers, agent counts, meetings, and follow-up opportunities.</p>
+            </div>
+            <button class="btn" id="addBrokerageBtn" type="button">+ Add Brokerage</button>
+          </section>
+
+          <section class="section-stats">
+            <div class="stat"><div class="label">Total Offices</div><div class="value" id="totalBrokerages">0</div></div>
+            <div class="stat"><div class="label">Follow-Up Due</div><div class="value" id="brokerageFollowUpDue">0</div></div>
+            <div class="stat"><div class="label">Meetings Scheduled</div><div class="value" id="brokerageMeetings">0</div></div>
+            <div class="stat"><div class="label">Interested</div><div class="value" id="interestedBrokerages">0</div></div>
+            <div class="stat"><div class="label">Participating</div><div class="value" id="participatingBrokerages">0</div></div>
+          </section>
+
+          <section class="toolbar">
+            <input id="brokerageSearchInput" type="search" placeholder="Search office, manager, owner, contact, address, phone, email, or notes">
+            <select id="brokerageStatusFilter">
+              <option value="">All statuses</option>
+              <option value="New Contact">New Contact</option>
+              <option value="Follow-Up Needed">Follow-Up Needed</option>
+              <option value="Information Sent">Information Sent</option>
+              <option value="Meeting Requested">Meeting Requested</option>
+              <option value="Meeting Scheduled">Meeting Scheduled</option>
+              <option value="Interested">Interested</option>
+              <option value="Participating">Participating</option>
+              <option value="Not Now">Not Now</option>
+              <option value="No Response">No Response</option>
+            </select>
+            <select id="brokerageSourceFilter">
+              <option value="">All sources</option>
+              <option value="Open House">Open House</option>
+              <option value="Referral">Referral</option>
+              <option value="Phoenix REALTORS">Phoenix REALTORS</option>
+              <option value="Office Meeting">Office Meeting</option>
+              <option value="Phone Call">Phone Call</option>
+              <option value="Email">Email</option>
+              <option value="Social Media">Social Media</option>
+              <option value="Other">Other</option>
+            </select>
+            <select id="brokerageFollowUpFilter">
+              <option value="">All follow-up dates</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due Today</option>
+              <option value="week">Due This Week</option>
+              <option value="none">No Follow-Up Set</option>
+            </select>
+          </section>
+
+          <section class="table-card">
+            <div class="table-head">
+              <h3>Brokerage Offices</h3>
+              <span class="small" id="brokerageRecordCount">0 records</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Office</th>
+                    <th>Owner / Manager</th>
+                    <th>Agents</th>
+                    <th>Primary Contact</th>
+                    <th>Address</th>
+                    <th>Status</th>
+                    <th>Next Follow-Up</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="brokerageTableBody"></tbody>
+              </table>
+              <div class="empty" id="brokerageEmptyState">No brokerage offices have been added yet.</div>
+            </div>
+          </section>
+        </div>
+
+        <div id="contractorsSection" class="crm-section">
+          <section class="hero">
+            <div>
+              <h2>Contractor Relationships</h2>
+              <p>Track businesses, contacts, specialties, licenses, meetings, and BlueVera participation.</p>
+            </div>
+            <button class="btn" id="addContractorBtn" type="button">+ Add Contractor</button>
+          </section>
+
+          <section class="section-stats">
+            <div class="stat"><div class="label">Total Contractors</div><div class="value" id="totalContractors">0</div></div>
+            <div class="stat"><div class="label">Follow-Up Due</div><div class="value" id="contractorFollowUpDue">0</div></div>
+            <div class="stat"><div class="label">Meetings Scheduled</div><div class="value" id="contractorMeetings">0</div></div>
+            <div class="stat"><div class="label">Interested</div><div class="value" id="interestedContractors">0</div></div>
+            <div class="stat"><div class="label">Signed Up</div><div class="value" id="signedUpContractors">0</div></div>
+          </section>
+
+          <section class="toolbar">
+            <input id="contractorSearchInput" type="search" placeholder="Search business, contact, trade, email, phone, service area, or notes">
+            <select id="contractorStatusFilter">
+              <option value="">All statuses</option>
+              <option value="New Contact">New Contact</option>
+              <option value="Follow-Up Needed">Follow-Up Needed</option>
+              <option value="Information Sent">Information Sent</option>
+              <option value="Meeting Requested">Meeting Requested</option>
+              <option value="Meeting Scheduled">Meeting Scheduled</option>
+              <option value="Interested">Interested</option>
+              <option value="Signed Up">Signed Up</option>
+              <option value="Not Now">Not Now</option>
+              <option value="No Response">No Response</option>
+            </select>
+            <select id="contractorSourceFilter">
+              <option value="">All sources</option>
+              <option value="Open House">Open House</option>
+              <option value="Referral">Referral</option>
+              <option value="Job Site">Job Site</option>
+              <option value="Office Meeting">Office Meeting</option>
+              <option value="Phone Call">Phone Call</option>
+              <option value="Email">Email</option>
+              <option value="Social Media">Social Media</option>
+              <option value="Other">Other</option>
+            </select>
+            <select id="contractorFollowUpFilter">
+              <option value="">All follow-up dates</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due Today</option>
+              <option value="week">Due This Week</option>
+              <option value="none">No Follow-Up Set</option>
+            </select>
+          </section>
+
+          <section class="table-card">
+            <div class="table-head">
+              <h3>Contractor Contacts</h3>
+              <span class="small" id="contractorRecordCount">0 records</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Business</th>
+                    <th>Contact</th>
+                    <th>Trade</th>
+                    <th>License</th>
+                    <th>Service Area</th>
+                    <th>Status</th>
+                    <th>Next Follow-Up</th>
+                    <th>BlueVera Account</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="contractorTableBody"></tbody>
+              </table>
+              <div class="empty" id="contractorEmptyState">No contractors have been added yet.</div>
+            </div>
+          </section>
+        </div>
+      </main>
+
+      <div class="section-placeholder" id="placeholderSection"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="agentModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Add Agent</h3>
+        <button class="close-btn" id="closeModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="agentForm">
+        <div class="modal-body">
+          <div id="formNotice" class="notice"></div>
+
+          <div class="form-grid">
+            <div class="field">
+              <label for="firstName">First Name *</label>
+              <input id="firstName" required>
+            </div>
+
+            <div class="field">
+              <label for="lastName">Last Name *</label>
+              <input id="lastName" required>
+            </div>
+
+            <div class="field">
+              <label for="brokerage">Brokerage</label>
+              <input id="brokerage">
+            </div>
+
+            <div class="field">
+              <label for="titleRole">Title / Role</label>
+              <input id="titleRole" placeholder="Agent, broker, office manager...">
+            </div>
+
+            <div class="field">
+              <label for="email">Email</label>
+              <input id="email" type="email">
+            </div>
+
+            <div class="field">
+              <label for="phone">Phone</label>
+              <input id="phone" type="tel">
+            </div>
+
+            <div class="field">
+              <label for="contactSource">Where You Met</label>
+              <select id="contactSource">
+                <option value="">Select source</option>
+                <option value="Open House">Open House</option>
+                <option value="Referral">Referral</option>
+                <option value="Phoenix REALTORS">Phoenix REALTORS</option>
+                <option value="Office Meeting">Office Meeting</option>
+                <option value="Phone Call">Phone Call</option>
+                <option value="Email">Email</option>
+                <option value="Social Media">Social Media</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="status">Current Status</label>
+              <select id="status">
+                <option value="New Contact">New Contact</option>
+                <option value="Follow-Up Needed">Follow-Up Needed</option>
+                <option value="Information Sent">Information Sent</option>
+                <option value="Meeting Requested">Meeting Requested</option>
+                <option value="Meeting Scheduled">Meeting Scheduled</option>
+                <option value="Interested">Interested</option>
+                <option value="Signed Up">Signed Up</option>
+                <option value="Not Now">Not Now</option>
+                <option value="No Response">No Response</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="firstContactDate">Date First Contacted</label>
+              <input id="firstContactDate" type="date">
+            </div>
+
+            <div class="field">
+              <label for="lastContactDate">Last Contact Date</label>
+              <input id="lastContactDate" type="date">
+            </div>
+
+            <div class="field">
+              <label for="nextFollowUp">Next Follow-Up</label>
+              <input id="nextFollowUp" type="date">
+            </div>
+
+            <div class="field">
+              <label for="meetingDate">Meeting Date</label>
+              <input id="meetingDate" type="datetime-local">
+            </div>
+
+            <div class="field">
+              <label>BlueVera Account</label>
+              <input id="agentAccountStatusDisplay" value="Checked automatically by email" disabled>
+            </div>
+
+            <div class="field">
+              <label for="interestLevel">Interest Level</label>
+              <select id="interestLevel">
+                <option value="">Not Set</option>
+                <option value="Low">Low</option>
+                <option value="Medium">Medium</option>
+                <option value="High">High</option>
+              </select>
+            </div>
+
+            <div class="field full">
+              <label for="notes">Notes</label>
+              <textarea id="notes" placeholder="Conversation details, concerns, interests, next step..."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn" id="cancelBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="saveBtn" type="submit">Save Agent</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <div class="modal-backdrop" id="brokerageModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="brokerageModalTitle">Add Brokerage</h3>
+        <button class="close-btn" id="closeBrokerageModalBtn" type="button">&times;</button>
+      </div>
+      <form id="brokerageForm">
+        <div class="modal-body">
+          <div id="brokerageFormNotice" class="notice"></div>
+          <div class="form-grid">
+            <div class="field"><label for="officeName">Office Name *</label><input id="officeName" required></div>
+            <div class="field"><label for="brokerageBrand">Brokerage Brand</label><input id="brokerageBrand"></div>
+            <div class="field"><label for="ownerName">Owner</label><input id="ownerName"></div>
+            <div class="field"><label for="officeManagerName">Office Manager</label><input id="officeManagerName"></div>
+            <div class="field"><label for="numberOfAgents">Number of Agents</label><input id="numberOfAgents" type="number" min="0"></div>
+            <div class="field"><label for="brokerageMainPhone">Main Phone</label><input id="brokerageMainPhone" type="tel"></div>
+            <div class="field"><label for="brokerageMainEmail">Main Email</label><input id="brokerageMainEmail" type="email"></div>
+            <div class="field"><label for="brokerageWebsite">Website</label><input id="brokerageWebsite" type="url"></div>
+            <div class="field full"><label for="streetAddress">Street Address</label><input id="streetAddress"></div>
+            <div class="field"><label for="brokerageCity">City</label><input id="brokerageCity"></div>
+            <div class="field"><label for="brokerageState">State</label><input id="brokerageState" value="AZ"></div>
+            <div class="field"><label for="brokerageZip">ZIP Code</label><input id="brokerageZip"></div>
+            <div class="field"><label for="primaryContactName">Primary Contact</label><input id="primaryContactName"></div>
+            <div class="field"><label for="primaryContactTitle">Contact Title</label><input id="primaryContactTitle"></div>
+            <div class="field"><label for="primaryContactPhone">Contact Phone</label><input id="primaryContactPhone" type="tel"></div>
+            <div class="field"><label for="primaryContactEmail">Contact Email</label><input id="primaryContactEmail" type="email"></div>
+            <div class="field"><label for="brokerageContactSource">How You Connected</label>
+              <select id="brokerageContactSource">
+                <option value="">Select source</option><option>Open House</option><option>Referral</option><option>Phoenix REALTORS</option>
+                <option>Office Meeting</option><option>Phone Call</option><option>Email</option><option>Social Media</option><option>Other</option>
+              </select>
+            </div>
+            <div class="field"><label for="brokerageStatus">Status</label>
+              <select id="brokerageStatus">
+                <option>New Contact</option><option>Follow-Up Needed</option><option>Information Sent</option><option>Meeting Requested</option>
+                <option>Meeting Scheduled</option><option>Interested</option><option>Participating</option><option>Not Now</option><option>No Response</option>
+              </select>
+            </div>
+            <div class="field"><label for="brokerageInterestLevel">Interest Level</label>
+              <select id="brokerageInterestLevel"><option value="">Not Set</option><option>Low</option><option>Medium</option><option>High</option></select>
+            </div>
+            <div class="field"><label for="brokerageFirstContactDate">First Contact</label><input id="brokerageFirstContactDate" type="date"></div>
+            <div class="field"><label for="brokerageLastContactDate">Last Contact</label><input id="brokerageLastContactDate" type="date"></div>
+            <div class="field"><label for="brokerageNextFollowUp">Next Follow-Up</label><input id="brokerageNextFollowUp" type="date"></div>
+            <div class="field"><label for="brokerageMeetingDate">Meeting Date</label><input id="brokerageMeetingDate" type="datetime-local"></div>
+            <div class="field full"><label for="brokerageNotes">Notes / Pertinent Information</label><textarea id="brokerageNotes"></textarea></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="cancelBrokerageBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="saveBrokerageBtn" type="submit">Save Brokerage</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="contractorModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="contractorModalTitle">Add Contractor</h3>
+        <button class="close-btn" id="closeContractorModalBtn" type="button">&times;</button>
+      </div>
+      <form id="contractorForm">
+        <div class="modal-body">
+          <div id="contractorFormNotice" class="notice"></div>
+          <div class="form-grid">
+            <div class="field"><label for="contractorBusinessName">Business Name *</label><input id="contractorBusinessName" required></div>
+            <div class="field"><label for="contractorTradeSpecialty">Trade / Specialty</label><input id="contractorTradeSpecialty"></div>
+            <div class="field"><label for="contractorFirstName">First Name</label><input id="contractorFirstName"></div>
+            <div class="field"><label for="contractorLastName">Last Name</label><input id="contractorLastName"></div>
+            <div class="field"><label for="contractorContactName">Contact Name</label><input id="contractorContactName"></div>
+            <div class="field"><label for="contractorPhone">Phone</label><input id="contractorPhone" type="tel"></div>
+            <div class="field"><label for="contractorEmail">Email</label><input id="contractorEmail" type="email"></div>
+            <div class="field"><label for="contractorWebsite">Website</label><input id="contractorWebsite" type="url"></div>
+            <div class="field"><label for="contractorServiceArea">Service Area</label><input id="contractorServiceArea"></div>
+            <div class="field"><label for="contractorLicenseNumber">License Number</label><input id="contractorLicenseNumber"></div>
+            <div class="field"><label>BlueVera Account</label><input id="contractorAccountStatusDisplay" disabled value="Checked automatically by email"></div>
+            <div class="field"><label for="contractorContactSource">Where You Met</label>
+              <select id="contractorContactSource">
+                <option value="">Select source</option><option>Open House</option><option>Referral</option><option>Job Site</option>
+                <option>Office Meeting</option><option>Phone Call</option><option>Email</option><option>Social Media</option><option>Other</option>
+              </select>
+            </div>
+            <div class="field"><label for="contractorStatus">Status</label>
+              <select id="contractorStatus">
+                <option>New Contact</option><option>Follow-Up Needed</option><option>Information Sent</option><option>Meeting Requested</option>
+                <option>Meeting Scheduled</option><option>Interested</option><option>Signed Up</option><option>Not Now</option><option>No Response</option>
+              </select>
+            </div>
+            <div class="field"><label for="contractorInterestLevel">Interest Level</label>
+              <select id="contractorInterestLevel"><option value="">Not Set</option><option>Low</option><option>Medium</option><option>High</option></select>
+            </div>
+            <div class="field"><label for="contractorFirstContactDate">First Contact</label><input id="contractorFirstContactDate" type="date"></div>
+            <div class="field"><label for="contractorLastContactDate">Last Contact</label><input id="contractorLastContactDate" type="date"></div>
+            <div class="field"><label for="contractorNextFollowUp">Next Follow-Up</label><input id="contractorNextFollowUp" type="date"></div>
+            <div class="field"><label for="contractorMeetingDate">Meeting Date</label><input id="contractorMeetingDate" type="datetime-local"></div>
+            <div class="field full"><label for="contractorNotes">Notes</label><textarea id="contractorNotes"></textarea></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" id="cancelContractorBtn" type="button">Cancel</button>
+          <button class="btn btn-primary" id="saveContractorBtn" type="submit">Save Contractor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script>
+    const SUPABASE_URL = "https://evcvpuclrmywdqqakrik.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_1PE2I1AJDSD9M8xvbRaWxw_cu1eN8an";
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    let agents = [];
+    let registeredAgents = [];
+    let editingId = null;
+    let brokerages = [];
+    let editingBrokerageId = null;
+    let contractors = [];
+    let registeredContractors = [];
+    let editingContractorId = null;
+
+    const modal = document.getElementById("agentModal");
+    const form = document.getElementById("agentForm");
+    const tbody = document.getElementById("agentTableBody");
+    const emptyState = document.getElementById("emptyState");
+    const brokerageModal = document.getElementById("brokerageModal");
+    const brokerageForm = document.getElementById("brokerageForm");
+    const brokerageTbody = document.getElementById("brokerageTableBody");
+    const brokerageEmptyState = document.getElementById("brokerageEmptyState");
+    const contractorModal = document.getElementById("contractorModal");
+    const contractorForm = document.getElementById("contractorForm");
+    const contractorTbody = document.getElementById("contractorTableBody");
+    const contractorEmptyState = document.getElementById("contractorEmptyState");
+
+    function todayISO(){
+      return new Date().toISOString().slice(0,10);
+    }
+
+    function formatDate(value){
+      if(!value) return "—";
+      const d = new Date(value + (value.length === 10 ? "T00:00:00" : ""));
+      if(Number.isNaN(d.getTime())) return value;
+      return d.toLocaleDateString();
+    }
+
+    function escapeHtml(value){
+      return String(value ?? "")
+        .replaceAll("&","&amp;")
+        .replaceAll("<","&lt;")
+        .replaceAll(">","&gt;")
+        .replaceAll('"',"&quot;")
+        .replaceAll("'","&#039;");
+    }
+
+
+    function normalizeEmail(value){
+      return String(value || "").trim().toLowerCase();
+    }
+
+    function findRegisteredAgent(email){
+      const cleanEmail = normalizeEmail(email);
+      if(!cleanEmail) return null;
+      return registeredAgents.find(agent => normalizeEmail(agent.email) === cleanEmail) || null;
+    }
+
+    function hasBlueVeraAgentAccount(agent){
+      return Boolean(findRegisteredAgent(agent.email));
+    }
+
+    function pillClass(status){
+      if(status === "Signed Up") return "pill-signed";
+      if(status === "Interested") return "pill-interested";
+      if(status === "Meeting Scheduled" || status === "Meeting Requested") return "pill-meeting";
+      if(status === "Follow-Up Needed" || status === "Information Sent") return "pill-follow";
+      if(status === "Not Now" || status === "No Response") return "pill-notnow";
+      return "pill-new";
+    }
+
+    function openModal(agent = null){
+      editingId = agent ? agent.id : null;
+      document.getElementById("modalTitle").textContent = agent ? "Edit Agent" : "Add Agent";
+      document.getElementById("saveBtn").textContent = agent ? "Update Agent" : "Save Agent";
+      document.getElementById("formNotice").className = "notice";
+      document.getElementById("formNotice").textContent = "";
+
+      form.reset();
+
+      document.getElementById("firstContactDate").value = todayISO();
+      document.getElementById("lastContactDate").value = todayISO();
+      document.getElementById("status").value = "New Contact";
+
+      if(agent){
+        document.getElementById("firstName").value = agent.first_name || "";
+        document.getElementById("lastName").value = agent.last_name || "";
+        document.getElementById("brokerage").value = agent.brokerage || "";
+        document.getElementById("titleRole").value = agent.title_role || "";
+        document.getElementById("email").value = agent.email || "";
+        document.getElementById("phone").value = agent.phone || "";
+        document.getElementById("contactSource").value = agent.contact_source || "";
+        document.getElementById("status").value = agent.status || "New Contact";
+        document.getElementById("firstContactDate").value = agent.first_contact_date || "";
+        document.getElementById("lastContactDate").value = agent.last_contact_date || "";
+        document.getElementById("nextFollowUp").value = agent.next_follow_up || "";
+        document.getElementById("meetingDate").value = agent.meeting_date ? agent.meeting_date.slice(0,16) : "";
+        document.getElementById("interestLevel").value = agent.interest_level || "";
+        document.getElementById("notes").value = agent.notes || "";
+      }
+
+      const matchedAgent = findRegisteredAgent(agent ? agent.email : "");
+      document.getElementById("agentAccountStatusDisplay").value =
+        matchedAgent ? "Yes - linked to BlueVera agent account" : "No registered account found";
+
+      modal.classList.add("open");
+    }
+
+    function closeModal(){
+      modal.classList.remove("open");
+      editingId = null;
+    }
+
+    function showNotice(message, type){
+      const box = document.getElementById("formNotice");
+      box.textContent = message;
+      box.className = "notice show " + type;
+    }
+
+    function getFilteredAgents(){
+      const search = document.getElementById("searchInput").value.trim().toLowerCase();
+      const status = document.getElementById("statusFilter").value;
+      const source = document.getElementById("sourceFilter").value;
+      const follow = document.getElementById("followUpFilter").value;
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const weekEnd = new Date(today);
+      weekEnd.setDate(today.getDate()+7);
+
+      return agents.filter(agent => {
+        const haystack = [
+          agent.first_name,
+          agent.last_name,
+          agent.brokerage,
+          agent.email,
+          agent.phone,
+          agent.notes
+        ].join(" ").toLowerCase();
+
+        if(search && !haystack.includes(search)) return false;
+        if(status && agent.status !== status) return false;
+        if(source && agent.contact_source !== source) return false;
+
+        if(follow){
+          if(follow === "none" && agent.next_follow_up) return false;
+          if(follow !== "none"){
+            if(!agent.next_follow_up) return false;
+            const d = new Date(agent.next_follow_up + "T00:00:00");
+            if(follow === "overdue" && !(d < today)) return false;
+            if(follow === "today" && d.getTime() !== today.getTime()) return false;
+            if(follow === "week" && !(d >= today && d <= weekEnd)) return false;
+          }
+        }
+
+        return true;
+      });
+    }
+
+    function render(){
+      const filtered = getFilteredAgents();
+      tbody.innerHTML = "";
+      document.getElementById("recordCount").textContent = filtered.length + (filtered.length === 1 ? " record" : " records");
+
+      emptyState.style.display = filtered.length ? "none" : "block";
+
+      filtered.forEach(agent => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>
+            <div class="contact-name">${escapeHtml(agent.first_name)} ${escapeHtml(agent.last_name)}</div>
+            <div class="small">${escapeHtml(agent.title_role || "")}</div>
+          </td>
+          <td>
+            <div>${escapeHtml(agent.brokerage || "—")}</div>
+          </td>
+          <td>
+            <div>${escapeHtml(agent.email || "—")}</div>
+            <div class="small">${escapeHtml(agent.phone || "")}</div>
+          </td>
+          <td>
+            <span class="pill ${pillClass(agent.status)}">${escapeHtml(agent.status || "New Contact")}</span>
+          </td>
+          <td>${formatDate(agent.last_contact_date)}</td>
+          <td>${formatDate(agent.next_follow_up)}</td>
+          <td>${escapeHtml(agent.contact_source || "—")}</td>
+          <td>${hasBlueVeraAgentAccount(agent) ? '<span class="pill pill-signed">Yes</span>' : '<span class="pill pill-notnow">No</span>'}</td>
+          <td>
+            <div class="action-row">
+              <button class="icon-btn" data-edit="${agent.id}">Edit</button>
+              <button class="icon-btn" data-delete="${agent.id}">Delete</button>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      updateStats();
+    }
+
+    function updateStats(){
+      const today = new Date();
+      today.setHours(0,0,0,0);
+
+      document.getElementById("totalAgents").textContent = agents.length;
+      document.getElementById("followUpDue").textContent = agents.filter(a => {
+        if(!a.next_follow_up) return false;
+        const d = new Date(a.next_follow_up + "T00:00:00");
+        return d <= today;
+      }).length;
+
+      document.getElementById("meetingsScheduled").textContent =
+        agents.filter(a => a.status === "Meeting Scheduled" || a.meeting_date).length;
+
+      document.getElementById("interestedAgents").textContent =
+        agents.filter(a => a.status === "Interested" || a.interest_level === "High").length;
+
+      document.getElementById("signedUpAgents").textContent =
+        agents.filter(a => hasBlueVeraAgentAccount(a) || a.status === "Signed Up").length;
+    }
+
+    async function loadRegisteredAgents(){
+      const { data, error } = await supabaseClient
+        .from("agents")
+        .select("id, agent_name, brokerage_name, phone, email");
+
+      if(error){
+        console.warn("Could not load registered agents:", error);
+        registeredAgents = [];
+        return;
+      }
+
+      registeredAgents = data || [];
+    }
+
+    async function syncLinkedAgentIds(){
+      for(const crmAgent of agents){
+        const matched = findRegisteredAgent(crmAgent.email);
+        const desiredId = matched ? matched.id : null;
+
+        if((crmAgent.linked_agent_id || null) !== desiredId){
+          const { error } = await supabaseClient
+            .from("crm_agents")
+            .update({
+              linked_agent_id: desiredId,
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", crmAgent.id);
+
+          if(!error){
+            crmAgent.linked_agent_id = desiredId;
+          }
+        }
+      }
+    }
+
+    async function loadAgents(){
+      await loadRegisteredAgents();
+
+      const { data, error } = await supabaseClient
+        .from("crm_agents")
+        .select("*")
+        .order("created_at", { ascending:false });
+
+      if(error){
+        console.error(error);
+        emptyState.style.display = "block";
+        emptyState.innerHTML = `
+          <strong>Unable to load Agent CRM.</strong><br><br>
+          ${escapeHtml(error.message || "Check the Supabase table and admin policies.")}
+        `;
+        return;
+      }
+
+      agents = data || [];
+      await syncLinkedAgentIds();
+      render();
+    }
+
+    function getFormData(){
+      return {
+        first_name: document.getElementById("firstName").value.trim(),
+        last_name: document.getElementById("lastName").value.trim(),
+        brokerage: document.getElementById("brokerage").value.trim() || null,
+        title_role: document.getElementById("titleRole").value.trim() || null,
+        email: document.getElementById("email").value.trim().toLowerCase() || null,
+        phone: document.getElementById("phone").value.trim() || null,
+        contact_source: document.getElementById("contactSource").value || null,
+        status: document.getElementById("status").value,
+        first_contact_date: document.getElementById("firstContactDate").value || null,
+        last_contact_date: document.getElementById("lastContactDate").value || null,
+        next_follow_up: document.getElementById("nextFollowUp").value || null,
+        meeting_date: document.getElementById("meetingDate").value || null,
+        linked_agent_id: (() => {
+          const matched = findRegisteredAgent(document.getElementById("email").value);
+          return matched ? matched.id : null;
+        })(),
+        interest_level: document.getElementById("interestLevel").value || null,
+        notes: document.getElementById("notes").value.trim() || null,
+        updated_at: new Date().toISOString()
+      };
+    }
+
+    form.addEventListener("submit", async function(e){
+      e.preventDefault();
+
+      const payload = getFormData();
+      const saveBtn = document.getElementById("saveBtn");
+
+      if(!payload.first_name || !payload.last_name){
+        showNotice("First and last name are required.", "error");
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = editingId ? "Updating..." : "Saving...";
+
+      let result;
+
+      if(editingId){
+        result = await supabaseClient
+          .from("crm_agents")
+          .update(payload)
+          .eq("id", editingId)
+          .select()
+          .single();
+      }else{
+        payload.created_at = new Date().toISOString();
+        result = await supabaseClient
+          .from("crm_agents")
+          .insert(payload)
+          .select()
+          .single();
+      }
+
+      if(result.error){
+        console.error(result.error);
+        showNotice(result.error.message || "Unable to save agent.", "error");
+        saveBtn.disabled = false;
+        saveBtn.textContent = editingId ? "Update Agent" : "Save Agent";
+        return;
+      }
+
+      showNotice(editingId ? "Agent updated." : "Agent added.", "success");
+      await loadAgents();
+
+      setTimeout(closeModal, 500);
+      saveBtn.disabled = false;
+    });
+
+    tbody.addEventListener("click", async function(e){
+      const editId = e.target.getAttribute("data-edit");
+      const deleteId = e.target.getAttribute("data-delete");
+
+      if(editId){
+        const agent = agents.find(a => String(a.id) === String(editId));
+        if(agent) openModal(agent);
+      }
+
+      if(deleteId){
+        const agent = agents.find(a => String(a.id) === String(deleteId));
+        const name = agent ? `${agent.first_name} ${agent.last_name}` : "this agent";
+
+        if(!confirm(`Delete ${name} from the CRM?`)) return;
+
+        const { error } = await supabaseClient
+          .from("crm_agents")
+          .delete()
+          .eq("id", deleteId);
+
+        if(error){
+          alert(error.message || "Unable to delete agent.");
+          return;
+        }
+
+        await loadAgents();
+      }
+    });
+
+
+    document.getElementById("email").addEventListener("input", function(){
+      const matched = findRegisteredAgent(this.value);
+      document.getElementById("agentAccountStatusDisplay").value =
+        matched ? "Yes - linked to BlueVera agent account" : "No registered account found";
+    });
+
+    document.getElementById("addAgentBtn").addEventListener("click", () => openModal());
+    document.getElementById("closeModalBtn").addEventListener("click", closeModal);
+    document.getElementById("cancelBtn").addEventListener("click", closeModal);
+
+    modal.addEventListener("click", function(e){
+      if(e.target === modal) closeModal();
+    });
+
+    ["searchInput","statusFilter","sourceFilter","followUpFilter"].forEach(id => {
+      document.getElementById(id).addEventListener("input", render);
+      document.getElementById(id).addEventListener("change", render);
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", async function(){
+      await supabaseClient.auth.signOut();
+      sessionStorage.clear();
+      window.location.href = "index.html";
+    });
+
+
+
+    function openBrokerageModal(item = null){
+      editingBrokerageId = item ? item.id : null;
+      brokerageForm.reset();
+      document.getElementById("brokerageModalTitle").textContent = item ? "Edit Brokerage" : "Add Brokerage";
+      document.getElementById("saveBrokerageBtn").textContent = item ? "Update Brokerage" : "Save Brokerage";
+      document.getElementById("brokerageFormNotice").className = "notice";
+      document.getElementById("brokerageState").value = "AZ";
+      document.getElementById("brokerageStatus").value = "New Contact";
+      document.getElementById("brokerageFirstContactDate").value = todayISO();
+      document.getElementById("brokerageLastContactDate").value = todayISO();
+
+      if(item){
+        const map = {
+          officeName:"office_name", brokerageBrand:"brokerage_brand", ownerName:"owner_name",
+          officeManagerName:"office_manager_name", numberOfAgents:"number_of_agents",
+          brokerageMainPhone:"main_phone", brokerageMainEmail:"main_email", brokerageWebsite:"website",
+          streetAddress:"street_address", brokerageCity:"city", brokerageState:"state", brokerageZip:"zip_code",
+          primaryContactName:"primary_contact_name", primaryContactTitle:"primary_contact_title",
+          primaryContactPhone:"primary_contact_phone", primaryContactEmail:"primary_contact_email",
+          brokerageContactSource:"contact_source", brokerageStatus:"status", brokerageInterestLevel:"interest_level",
+          brokerageFirstContactDate:"first_contact_date", brokerageLastContactDate:"last_contact_date",
+          brokerageNextFollowUp:"next_follow_up", brokerageNotes:"notes"
+        };
+        Object.entries(map).forEach(([id,key]) => {
+          document.getElementById(id).value = item[key] ?? "";
+        });
+        document.getElementById("brokerageMeetingDate").value = item.meeting_date ? item.meeting_date.slice(0,16) : "";
+      }
+      brokerageModal.classList.add("open");
+    }
+
+    function closeBrokerageModal(){
+      brokerageModal.classList.remove("open");
+      editingBrokerageId = null;
+    }
+
+    function showBrokerageNotice(message,type){
+      const box = document.getElementById("brokerageFormNotice");
+      box.textContent = message;
+      box.className = "notice show " + type;
+    }
+
+    function getFilteredBrokerages(){
+      const q = document.getElementById("brokerageSearchInput").value.trim().toLowerCase();
+      const status = document.getElementById("brokerageStatusFilter").value;
+      const source = document.getElementById("brokerageSourceFilter").value;
+      const follow = document.getElementById("brokerageFollowUpFilter").value;
+      const today = new Date(); today.setHours(0,0,0,0);
+      const weekEnd = new Date(today); weekEnd.setDate(today.getDate()+7);
+
+      return brokerages.filter(b => {
+        const haystack = [b.office_name,b.brokerage_brand,b.owner_name,b.office_manager_name,b.main_phone,b.main_email,
+          b.street_address,b.city,b.primary_contact_name,b.primary_contact_email,b.notes].join(" ").toLowerCase();
+        if(q && !haystack.includes(q)) return false;
+        if(status && b.status !== status) return false;
+        if(source && b.contact_source !== source) return false;
+        if(follow){
+          if(follow === "none") return !b.next_follow_up;
+          if(!b.next_follow_up) return false;
+          const d = new Date(b.next_follow_up + "T00:00:00");
+          if(follow === "overdue" && !(d < today)) return false;
+          if(follow === "today" && d.getTime() !== today.getTime()) return false;
+          if(follow === "week" && !(d >= today && d <= weekEnd)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderBrokerages(){
+      const rows = getFilteredBrokerages();
+      brokerageTbody.innerHTML = "";
+      document.getElementById("brokerageRecordCount").textContent = rows.length + (rows.length === 1 ? " record" : " records");
+      brokerageEmptyState.style.display = rows.length ? "none" : "block";
+
+      rows.forEach(b => {
+        const tr = document.createElement("tr");
+        const mgr = [b.owner_name ? "Owner: "+b.owner_name : "", b.office_manager_name ? "Manager: "+b.office_manager_name : ""].filter(Boolean).join("<br>");
+        const address = [b.street_address,b.city,b.state,b.zip_code].filter(Boolean).map(escapeHtml).join("<br>");
+        tr.innerHTML = `
+          <td><div class="contact-name">${escapeHtml(b.office_name)}</div><div class="small">${escapeHtml(b.brokerage_brand || "")}</div></td>
+          <td><div class="small">${mgr || "—"}</div></td>
+          <td>${b.number_of_agents ?? "—"}</td>
+          <td><div>${escapeHtml(b.primary_contact_name || "—")}</div><div class="small">${escapeHtml(b.primary_contact_email || "")}<br>${escapeHtml(b.primary_contact_phone || "")}</div></td>
+          <td>${address || "—"}</td>
+          <td><span class="pill ${pillClass(b.status)}">${escapeHtml(b.status || "New Contact")}</span></td>
+          <td>${formatDate(b.next_follow_up)}</td>
+          <td><div class="action-row"><button class="icon-btn" data-edit-brokerage="${b.id}">Edit</button><button class="icon-btn" data-delete-brokerage="${b.id}">Delete</button></div></td>`;
+        brokerageTbody.appendChild(tr);
+      });
+
+      const today = new Date(); today.setHours(0,0,0,0);
+      document.getElementById("totalBrokerages").textContent = brokerages.length;
+      document.getElementById("brokerageFollowUpDue").textContent = brokerages.filter(b => b.next_follow_up && new Date(b.next_follow_up+"T00:00:00") <= today).length;
+      document.getElementById("brokerageMeetings").textContent = brokerages.filter(b => b.status === "Meeting Scheduled" || b.meeting_date).length;
+      document.getElementById("interestedBrokerages").textContent = brokerages.filter(b => b.status === "Interested" || b.interest_level === "High").length;
+      document.getElementById("participatingBrokerages").textContent = brokerages.filter(b => b.status === "Participating").length;
+    }
+
+    async function loadBrokerages(){
+      const {data,error} = await supabaseClient.from("crm_brokerages").select("*").order("created_at",{ascending:false});
+      if(error){
+        console.error(error);
+        brokerageEmptyState.style.display = "block";
+        brokerageEmptyState.textContent = "Unable to load brokerages: " + error.message;
+        return;
+      }
+      brokerages = data || [];
+      renderBrokerages();
+    }
+
+    brokerageForm.addEventListener("submit", async function(e){
+      e.preventDefault();
+      const countValue = document.getElementById("numberOfAgents").value;
+      const payload = {
+        office_name:document.getElementById("officeName").value.trim(),
+        brokerage_brand:document.getElementById("brokerageBrand").value.trim() || null,
+        owner_name:document.getElementById("ownerName").value.trim() || null,
+        office_manager_name:document.getElementById("officeManagerName").value.trim() || null,
+        main_phone:document.getElementById("brokerageMainPhone").value.trim() || null,
+        main_email:document.getElementById("brokerageMainEmail").value.trim().toLowerCase() || null,
+        website:document.getElementById("brokerageWebsite").value.trim() || null,
+        street_address:document.getElementById("streetAddress").value.trim() || null,
+        city:document.getElementById("brokerageCity").value.trim() || null,
+        state:document.getElementById("brokerageState").value.trim() || "AZ",
+        zip_code:document.getElementById("brokerageZip").value.trim() || null,
+        number_of_agents:countValue === "" ? null : Number(countValue),
+        primary_contact_name:document.getElementById("primaryContactName").value.trim() || null,
+        primary_contact_title:document.getElementById("primaryContactTitle").value.trim() || null,
+        primary_contact_phone:document.getElementById("primaryContactPhone").value.trim() || null,
+        primary_contact_email:document.getElementById("primaryContactEmail").value.trim().toLowerCase() || null,
+        contact_source:document.getElementById("brokerageContactSource").value || null,
+        status:document.getElementById("brokerageStatus").value,
+        interest_level:document.getElementById("brokerageInterestLevel").value || null,
+        first_contact_date:document.getElementById("brokerageFirstContactDate").value || null,
+        last_contact_date:document.getElementById("brokerageLastContactDate").value || null,
+        next_follow_up:document.getElementById("brokerageNextFollowUp").value || null,
+        meeting_date:document.getElementById("brokerageMeetingDate").value || null,
+        notes:document.getElementById("brokerageNotes").value.trim() || null,
+        updated_at:new Date().toISOString()
+      };
+      if(!payload.office_name){ showBrokerageNotice("Office name is required.","error"); return; }
+      const save = document.getElementById("saveBrokerageBtn"); save.disabled = true;
+      let result;
+      if(editingBrokerageId){
+        result = await supabaseClient.from("crm_brokerages").update(payload).eq("id",editingBrokerageId).select().single();
+      }else{
+        payload.created_at = new Date().toISOString();
+        result = await supabaseClient.from("crm_brokerages").insert(payload).select().single();
+      }
+      save.disabled = false;
+      if(result.error){ showBrokerageNotice(result.error.message,"error"); return; }
+      await loadBrokerages(); closeBrokerageModal();
+    });
+
+    brokerageTbody.addEventListener("click", async function(e){
+      const editId = e.target.getAttribute("data-edit-brokerage");
+      const deleteId = e.target.getAttribute("data-delete-brokerage");
+      if(editId){
+        const row = brokerages.find(b => String(b.id) === String(editId));
+        if(row) openBrokerageModal(row);
+      }
+      if(deleteId){
+        if(!confirm("Delete this brokerage from the CRM?")) return;
+        const {error} = await supabaseClient.from("crm_brokerages").delete().eq("id",deleteId);
+        if(error){ alert(error.message); return; }
+        await loadBrokerages();
+      }
+    });
+
+    document.getElementById("addBrokerageBtn").addEventListener("click",()=>openBrokerageModal());
+    document.getElementById("closeBrokerageModalBtn").addEventListener("click",closeBrokerageModal);
+    document.getElementById("cancelBrokerageBtn").addEventListener("click",closeBrokerageModal);
+    brokerageModal.addEventListener("click",e=>{ if(e.target===brokerageModal) closeBrokerageModal(); });
+    ["brokerageSearchInput","brokerageStatusFilter","brokerageSourceFilter","brokerageFollowUpFilter"].forEach(id=>{
+      document.getElementById(id).addEventListener("input",renderBrokerages);
+      document.getElementById(id).addEventListener("change",renderBrokerages);
+    });
+
+    function normalizeEmail(value){ return String(value || "").trim().toLowerCase(); }
+    function findRegisteredContractor(email){
+      const clean = normalizeEmail(email);
+      return registeredContractors.find(c => normalizeEmail(c.email) === clean) || null;
+    }
+
+    async function loadRegisteredContractors(){
+      const {data,error} = await supabaseClient.from("contractors").select("id,business_name,contact_name,phone,email,service_area,license_number");
+      if(error){ console.warn(error); registeredContractors = []; return; }
+      registeredContractors = data || [];
+    }
+
+    function openContractorModal(item = null){
+      editingContractorId = item ? item.id : null;
+      contractorForm.reset();
+      document.getElementById("contractorModalTitle").textContent = item ? "Edit Contractor" : "Add Contractor";
+      document.getElementById("saveContractorBtn").textContent = item ? "Update Contractor" : "Save Contractor";
+      document.getElementById("contractorFormNotice").className = "notice";
+      document.getElementById("contractorStatus").value = "New Contact";
+      document.getElementById("contractorFirstContactDate").value = todayISO();
+      document.getElementById("contractorLastContactDate").value = todayISO();
+
+      if(item){
+        const map = {
+          contractorBusinessName:"business_name", contractorTradeSpecialty:"trade_specialty",
+          contractorFirstName:"first_name", contractorLastName:"last_name", contractorContactName:"contact_name",
+          contractorPhone:"phone", contractorEmail:"email", contractorWebsite:"website",
+          contractorServiceArea:"service_area", contractorLicenseNumber:"license_number",
+          contractorContactSource:"contact_source", contractorStatus:"status", contractorInterestLevel:"interest_level",
+          contractorFirstContactDate:"first_contact_date", contractorLastContactDate:"last_contact_date",
+          contractorNextFollowUp:"next_follow_up", contractorNotes:"notes"
+        };
+        Object.entries(map).forEach(([id,key]) => document.getElementById(id).value = item[key] ?? "");
+        document.getElementById("contractorMeetingDate").value = item.meeting_date ? item.meeting_date.slice(0,16) : "";
+      }
+
+      const reg = findRegisteredContractor(item ? item.email : "");
+      document.getElementById("contractorAccountStatusDisplay").value = reg ? "Yes - linked to BlueVera account" : "No registered account found";
+      contractorModal.classList.add("open");
+    }
+
+    function closeContractorModal(){ contractorModal.classList.remove("open"); editingContractorId = null; }
+    function showContractorNotice(message,type){
+      const box = document.getElementById("contractorFormNotice");
+      box.textContent = message; box.className = "notice show " + type;
+    }
+
+    function getFilteredContractors(){
+      const q = document.getElementById("contractorSearchInput").value.trim().toLowerCase();
+      const status = document.getElementById("contractorStatusFilter").value;
+      const source = document.getElementById("contractorSourceFilter").value;
+      const follow = document.getElementById("contractorFollowUpFilter").value;
+      const today = new Date(); today.setHours(0,0,0,0);
+      const weekEnd = new Date(today); weekEnd.setDate(today.getDate()+7);
+
+      return contractors.filter(c => {
+        const haystack = [c.business_name,c.contact_name,c.first_name,c.last_name,c.trade_specialty,c.email,c.phone,c.service_area,c.license_number,c.notes].join(" ").toLowerCase();
+        if(q && !haystack.includes(q)) return false;
+        if(status && c.status !== status) return false;
+        if(source && c.contact_source !== source) return false;
+        if(follow){
+          if(follow === "none") return !c.next_follow_up;
+          if(!c.next_follow_up) return false;
+          const d = new Date(c.next_follow_up + "T00:00:00");
+          if(follow === "overdue" && !(d < today)) return false;
+          if(follow === "today" && d.getTime() !== today.getTime()) return false;
+          if(follow === "week" && !(d >= today && d <= weekEnd)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderContractors(){
+      const rows = getFilteredContractors();
+      contractorTbody.innerHTML = "";
+      document.getElementById("contractorRecordCount").textContent = rows.length + (rows.length === 1 ? " record" : " records");
+      contractorEmptyState.style.display = rows.length ? "none" : "block";
+
+      rows.forEach(c => {
+        const reg = findRegisteredContractor(c.email);
+        const contact = c.contact_name || [c.first_name,c.last_name].filter(Boolean).join(" ") || "—";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><div class="contact-name">${escapeHtml(c.business_name)}</div><div class="small">${escapeHtml(c.website || "")}</div></td>
+          <td><div>${escapeHtml(contact)}</div><div class="small">${escapeHtml(c.email || "—")}<br>${escapeHtml(c.phone || "")}</div></td>
+          <td>${escapeHtml(c.trade_specialty || "—")}</td>
+          <td>${escapeHtml(c.license_number || (reg && reg.license_number) || "—")}</td>
+          <td>${escapeHtml(c.service_area || "—")}</td>
+          <td><span class="pill ${pillClass(c.status)}">${escapeHtml(c.status || "New Contact")}</span></td>
+          <td>${formatDate(c.next_follow_up)}</td>
+          <td>${reg ? '<span class="pill pill-signed">Yes</span>' : '<span class="pill pill-notnow">No</span>'}</td>
+          <td><div class="action-row"><button class="icon-btn" data-edit-contractor="${c.id}">Edit</button><button class="icon-btn" data-delete-contractor="${c.id}">Delete</button></div></td>`;
+        contractorTbody.appendChild(tr);
+      });
+
+      const today = new Date(); today.setHours(0,0,0,0);
+      document.getElementById("totalContractors").textContent = contractors.length;
+      document.getElementById("contractorFollowUpDue").textContent = contractors.filter(c => c.next_follow_up && new Date(c.next_follow_up+"T00:00:00") <= today).length;
+      document.getElementById("contractorMeetings").textContent = contractors.filter(c => c.status === "Meeting Scheduled" || c.meeting_date).length;
+      document.getElementById("interestedContractors").textContent = contractors.filter(c => c.status === "Interested" || c.interest_level === "High").length;
+      document.getElementById("signedUpContractors").textContent = contractors.filter(c => findRegisteredContractor(c.email) || c.status === "Signed Up").length;
+    }
+
+    async function loadContractors(){
+      await loadRegisteredContractors();
+      const {data,error} = await supabaseClient.from("crm_contractors").select("*").order("created_at",{ascending:false});
+      if(error){
+        console.error(error);
+        contractorEmptyState.style.display = "block";
+        contractorEmptyState.textContent = "Unable to load contractors: " + error.message;
+        return;
+      }
+      contractors = data || [];
+      for(const c of contractors){
+        const reg = findRegisteredContractor(c.email);
+        if(reg && c.linked_contractor_id !== reg.id){
+          await supabaseClient.from("crm_contractors").update({linked_contractor_id:reg.id,updated_at:new Date().toISOString()}).eq("id",c.id);
+          c.linked_contractor_id = reg.id;
+        }
+      }
+      renderContractors();
+    }
+
+    contractorForm.addEventListener("submit", async function(e){
+      e.preventDefault();
+      const email = document.getElementById("contractorEmail").value.trim().toLowerCase();
+      const reg = findRegisteredContractor(email);
+      const payload = {
+        first_name:document.getElementById("contractorFirstName").value.trim() || null,
+        last_name:document.getElementById("contractorLastName").value.trim() || null,
+        contact_name:document.getElementById("contractorContactName").value.trim() || null,
+        business_name:document.getElementById("contractorBusinessName").value.trim(),
+        trade_specialty:document.getElementById("contractorTradeSpecialty").value.trim() || null,
+        phone:document.getElementById("contractorPhone").value.trim() || null,
+        email:email || null,
+        website:document.getElementById("contractorWebsite").value.trim() || null,
+        service_area:document.getElementById("contractorServiceArea").value.trim() || null,
+        license_number:document.getElementById("contractorLicenseNumber").value.trim() || null,
+        contact_source:document.getElementById("contractorContactSource").value || null,
+        status:document.getElementById("contractorStatus").value,
+        interest_level:document.getElementById("contractorInterestLevel").value || null,
+        first_contact_date:document.getElementById("contractorFirstContactDate").value || null,
+        last_contact_date:document.getElementById("contractorLastContactDate").value || null,
+        next_follow_up:document.getElementById("contractorNextFollowUp").value || null,
+        meeting_date:document.getElementById("contractorMeetingDate").value || null,
+        notes:document.getElementById("contractorNotes").value.trim() || null,
+        linked_contractor_id:reg ? reg.id : null,
+        updated_at:new Date().toISOString()
+      };
+      if(!payload.business_name){ showContractorNotice("Business name is required.","error"); return; }
+      const save = document.getElementById("saveContractorBtn"); save.disabled = true;
+      let result;
+      if(editingContractorId){
+        result = await supabaseClient.from("crm_contractors").update(payload).eq("id",editingContractorId).select().single();
+      }else{
+        payload.created_at = new Date().toISOString();
+        result = await supabaseClient.from("crm_contractors").insert(payload).select().single();
+      }
+      save.disabled = false;
+      if(result.error){ showContractorNotice(result.error.message,"error"); return; }
+      await loadContractors(); closeContractorModal();
+    });
+
+    contractorTbody.addEventListener("click", async function(e){
+      const editId = e.target.getAttribute("data-edit-contractor");
+      const deleteId = e.target.getAttribute("data-delete-contractor");
+      if(editId){
+        const row = contractors.find(c => String(c.id) === String(editId));
+        if(row) openContractorModal(row);
+      }
+      if(deleteId){
+        if(!confirm("Delete this contractor from the CRM?")) return;
+        const {error} = await supabaseClient.from("crm_contractors").delete().eq("id",deleteId);
+        if(error){ alert(error.message); return; }
+        await loadContractors();
+      }
+    });
+
+    document.getElementById("addContractorBtn").addEventListener("click",()=>openContractorModal());
+    document.getElementById("closeContractorModalBtn").addEventListener("click",closeContractorModal);
+    document.getElementById("cancelContractorBtn").addEventListener("click",closeContractorModal);
+    contractorModal.addEventListener("click",e=>{ if(e.target===contractorModal) closeContractorModal(); });
+    document.getElementById("contractorEmail").addEventListener("input",function(){
+      document.getElementById("contractorAccountStatusDisplay").value = findRegisteredContractor(this.value) ? "Yes - linked to BlueVera account" : "No registered account found";
+    });
+    ["contractorSearchInput","contractorStatusFilter","contractorSourceFilter","contractorFollowUpFilter"].forEach(id=>{
+      document.getElementById(id).addEventListener("input",renderContractors);
+      document.getElementById(id).addEventListener("change",renderContractors);
+    });
+
+
+    const sectionDetails = {
+      "admin-info": {
+        title: "Admin Info",
+        subtitle: "BlueVera internal CRM settings and administrative information.",
+        body: "This section can hold admin profile details, CRM settings, user permissions, and internal notes."
+      },
+      "inspectors": {
+        title: "Inspectors",
+        subtitle: "Track inspection companies, licensed inspectors, follow-ups, and report participation.",
+        body: "The inspector CRM section will track company information, license details, meetings, and report uploads."
+      },
+      "insurance": {
+        title: "Insurance Companies",
+        subtitle: "Track insurance contacts, agencies, partnerships, and follow-up opportunities.",
+        body: "This section will be added after the core professional contact workflows are complete."
+      },
+      "title-companies": {
+        title: "Title Companies",
+        subtitle: "Track title-company contacts, offices, meetings, and partnership opportunities.",
+        body: "This section will be added after the core professional contact workflows are complete."
+      }
+    };
+
+    function showSection(section){
+      document.querySelectorAll(".sidebar-link").forEach(link => {
+        link.classList.toggle("active", link.dataset.section === section);
+      });
+
+      const agentsSection = document.getElementById("agentsSection");
+      const brokeragesSection = document.getElementById("brokeragesSection");
+      const contractorsSection = document.getElementById("contractorsSection");
+      const placeholder = document.getElementById("placeholderSection");
+
+      agentsSection.style.display = "none";
+      brokeragesSection.classList.remove("active");
+      contractorsSection.classList.remove("active");
+      placeholder.classList.remove("active");
+
+      if(section === "agents"){
+        agentsSection.style.display = "block";
+        document.getElementById("pageHeading").textContent = "Agent CRM";
+        document.getElementById("pageSubheading").textContent = "BlueVera outreach and relationship management";
+      }else if(section === "brokerages"){
+        brokeragesSection.classList.add("active");
+        document.getElementById("pageHeading").textContent = "Brokerages";
+        document.getElementById("pageSubheading").textContent = "Track brokerage relationships, offices, decision-makers, and meetings.";
+        loadBrokerages();
+      }else if(section === "contractors"){
+        contractorsSection.classList.add("active");
+        document.getElementById("pageHeading").textContent = "Contractors";
+        document.getElementById("pageSubheading").textContent = "Manage contractor outreach, specialties, service areas, and platform participation.";
+        loadContractors();
+      }else{
+        const info = sectionDetails[section];
+        if(info){
+          placeholder.innerHTML = `<h2>${info.title}</h2><p>${info.body}</p>`;
+          placeholder.classList.add("active");
+          document.getElementById("pageHeading").textContent = info.title;
+          document.getElementById("pageSubheading").textContent = info.subtitle;
+        }
+      }
+
+      document.getElementById("sidebar").classList.remove("open");
+    }
+
+    document.querySelectorAll(".sidebar-link").forEach(link => {
+      link.addEventListener("click", () => showSection(link.dataset.section));
+    });
+
+    document.getElementById("mobileMenuBtn").addEventListener("click", () => {
+      document.getElementById("sidebar").classList.toggle("open");
+    });
+
+    loadAgents();
+  </script>
+</body>
+</html>
