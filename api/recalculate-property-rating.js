@@ -19,7 +19,7 @@ const ANON_KEY =
   process.env.SUPABASE_ANON_KEY || "";
 
 const RATING_VERSION =
-  "bluevera-v2-map-baseline";
+  "bluevera-v3-contributor-records";
 
 function clean(value) {
   return String(value ?? "")
@@ -60,18 +60,143 @@ function normalizeAddress(value) {
     .replace(/\bboulevard\b/g, "blvd")
     .replace(/\bcourt\b/g, "ct")
     .replace(/\bplace\b/g, "pl")
+    .replace(/\bcircle\b/g, "cir")
     .replace(/\bterrace\b/g, "ter")
     .replace(/\bparkway\b/g, "pkwy")
+    .replace(
+      /\b(arizona|az|phoenix|glendale|scottsdale|tempe|mesa|chandler|gilbert|paradise valley)\b/g,
+      " "
+    )
+    .replace(/\b\d{5}(?:-\d{4})?\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
+function addressParts(value) {
+  const normalized =
+    normalizeAddress(value);
+
+  const parts =
+    normalized
+      .split(" ")
+      .filter(Boolean);
+
+  const number =
+    parts.find(part =>
+      /^\d+[a-z]?$/.test(part)
+    ) || "";
+
+  const words =
+    parts.filter(part =>
+      !/^\d+[a-z]?$/.test(part)
+    );
+
+  return {
+    normalized,
+    number,
+    words
+  };
+}
+
+function addressesMatch(
+  firstAddress,
+  secondAddress
+) {
+  const first =
+    addressParts(firstAddress);
+
+  const second =
+    addressParts(secondAddress);
+
+  if (
+    !first.normalized ||
+    !second.normalized
+  ) {
+    return false;
+  }
+
+  if (
+    first.number &&
+    second.number &&
+    first.number !== second.number
+  ) {
+    return false;
+  }
+
+  if (
+    first.normalized ===
+    second.normalized
+  ) {
+    return true;
+  }
+
+  if (
+    first.normalized.includes(
+      second.normalized
+    ) ||
+    second.normalized.includes(
+      first.normalized
+    )
+  ) {
+    return true;
+  }
+
+  const sharedWords =
+    first.words.filter(word =>
+      word.length >= 3 &&
+      second.words.includes(word)
+    );
+
+  return sharedWords.length >= 1;
+}
+
+function mergeUniqueRows(...groups) {
+  const rows = new Map();
+
+  groups.flat().forEach(row => {
+    if (!row) {
+      return;
+    }
+
+    const key =
+      clean(row.id) ||
+      [
+        clean(row.property_id),
+        clean(row.property_address),
+        clean(row.created_at),
+        clean(row.statement),
+        clean(row.description),
+        clean(row.note)
+      ].join("|");
+
+    if (!rows.has(key)) {
+      rows.set(key, row);
+    }
+  });
+
+  return Array.from(rows.values());
+}
+
 function ratingBand(score) {
-  if (score >= 95) return "Blue Ribbon";
-  if (score >= 90) return "Strong";
-  if (score >= 75) return "Well Documented";
-  if (score >= 60) return "Partial";
-  if (score >= 40) return "Limited";
+  if (score >= 95) {
+    return "Blue Ribbon";
+  }
+
+  if (score >= 90) {
+    return "Strong";
+  }
+
+  if (score >= 75) {
+    return "Well Documented";
+  }
+
+  if (score >= 60) {
+    return "Partial";
+  }
+
+  if (score >= 40) {
+    return "Limited";
+  }
 
   return "Incomplete";
 }
@@ -87,14 +212,17 @@ async function supabaseRequest(
 
       headers: {
         apikey: SERVICE_KEY,
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
+        Authorization:
+          `Bearer ${SERVICE_KEY}`,
+        "Content-Type":
+          "application/json",
         ...(options.headers || {})
       }
     }
   );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   let data = null;
 
@@ -124,10 +252,15 @@ async function optionalSupabaseRequest(
   options = {}
 ) {
   try {
-    return await supabaseRequest(
-      path,
-      options
-    );
+    const data =
+      await supabaseRequest(
+        path,
+        options
+      );
+
+    return Array.isArray(data)
+      ? data
+      : [];
   } catch (error) {
     console.warn(
       "Optional rating source unavailable:",
@@ -143,9 +276,10 @@ async function verifySupabaseUser(req) {
   const authorization =
     clean(req.headers.authorization);
 
-  const token = authorization
-    .replace(/^Bearer\s+/i, "")
-    .trim();
+  const token =
+    authorization
+      .replace(/^Bearer\s+/i, "")
+      .trim();
 
   if (!token) {
     throw new Error(
@@ -164,16 +298,21 @@ async function verifySupabaseUser(req) {
     {
       headers: {
         apikey: ANON_KEY,
-        Authorization: `Bearer ${token}`
+        Authorization:
+          `Bearer ${token}`
       }
     }
   );
 
-  const user = await response
-    .json()
-    .catch(() => null);
+  const user =
+    await response
+      .json()
+      .catch(() => null);
 
-  if (!response.ok || !user?.id) {
+  if (
+    !response.ok ||
+    !user?.id
+  ) {
     throw new Error(
       "The login session is invalid or expired."
     );
@@ -187,14 +326,15 @@ async function findProperty({
   address
 }) {
   if (clean(propertyId)) {
-    const rows = await supabaseRequest(
-      `properties?id=eq.${encodeURIComponent(
-        clean(propertyId)
-      )}&select=*&limit=1`,
-      {
-        method: "GET"
-      }
-    );
+    const rows =
+      await supabaseRequest(
+        `properties?id=eq.${encodeURIComponent(
+          clean(propertyId)
+        )}&select=*&limit=1`,
+        {
+          method: "GET"
+        }
+      );
 
     return Array.isArray(rows)
       ? rows[0] || null
@@ -208,14 +348,15 @@ async function findProperty({
     return null;
   }
 
-  const rows = await supabaseRequest(
-    `properties?normalized_address=eq.${encodeURIComponent(
-      normalizedAddress
-    )}&select=*&limit=1`,
-    {
-      method: "GET"
-    }
-  );
+  const rows =
+    await supabaseRequest(
+      `properties?normalized_address=eq.${encodeURIComponent(
+        normalizedAddress
+      )}&select=*&limit=1`,
+      {
+        method: "GET"
+      }
+    );
 
   return Array.isArray(rows)
     ? rows[0] || null
@@ -225,68 +366,314 @@ async function findProperty({
 async function loadPropertyEntries(
   propertyId
 ) {
-  const rows = await supabaseRequest(
-    `property_report_entries?property_id=eq.${encodeURIComponent(
-      propertyId
-    )}&select=*`,
-    {
-      method: "GET"
-    }
-  );
+  const rows =
+    await optionalSupabaseRequest(
+      `property_report_entries?property_id=eq.${encodeURIComponent(
+        propertyId
+      )}&select=*`,
+      {
+        method: "GET"
+      }
+    );
 
-  return Array.isArray(rows)
-    ? rows
-    : [];
+  return rows;
 }
 
 async function loadPropertyDocuments(
   propertyId
 ) {
-  const rows = await optionalSupabaseRequest(
-    `property_documents?property_id=eq.${encodeURIComponent(
-      propertyId
-    )}&select=*`,
-    {
-      method: "GET"
-    }
-  );
+  const rows =
+    await optionalSupabaseRequest(
+      `property_documents?property_id=eq.${encodeURIComponent(
+        propertyId
+      )}&select=*`,
+      {
+        method: "GET"
+      }
+    );
 
-  return Array.isArray(rows)
-    ? rows
-    : [];
+  return rows;
+}
+
+function normalizeContributorEntry(
+  row,
+  defaults = {}
+) {
+  return {
+    id:
+      row.id || null,
+
+    property_id:
+      row.property_id ||
+      defaults.propertyId ||
+      null,
+
+    category:
+      row.category ||
+      row.update_type ||
+      row.work_type ||
+      defaults.category ||
+      "Property Record",
+
+    system_name:
+      row.system_name ||
+      row.update_type ||
+      row.work_type ||
+      defaults.systemName ||
+      "",
+
+    event_year:
+      row.event_year ||
+      row.year ||
+      null,
+
+    event_date:
+      row.event_date ||
+      row.approximate_date ||
+      row.completed_date ||
+      row.created_at ||
+      null,
+
+    statement:
+      clean(
+        row.statement ||
+        row.note ||
+        row.description ||
+        row.update_type ||
+        row.work_type ||
+        "Property record"
+      ),
+
+    source_type:
+      row.source_type ||
+      defaults.sourceType ||
+      "property_record",
+
+    source_name:
+      row.source_name ||
+      row.contractor ||
+      row.email ||
+      row.contractors?.business_name ||
+      defaults.sourceName ||
+      "",
+
+    verification_status:
+      row.verification_status ||
+      row.record_status ||
+      row.status ||
+      defaults.verificationStatus ||
+      "submitted",
+
+    document_type:
+      row.document_type ||
+      (
+        row.permit_number
+          ? "permit"
+          : ""
+      ),
+
+    document_url:
+      row.document_url ||
+      row.file_url ||
+      "",
+
+    created_at:
+      row.created_at ||
+      null,
+
+    updated_at:
+      row.updated_at ||
+      row.created_at ||
+      null
+  };
+}
+
+async function loadContributorEntries(
+  property
+) {
+  const propertyId =
+    clean(property.id);
+
+  const encodedId =
+    encodeURIComponent(propertyId);
+
+  const propertyAddress =
+    clean(
+      property.full_address ||
+      property.address ||
+      property.street
+    );
+
+  const [
+    homeownerById,
+    contractorById,
+    allHomeownerUpdates,
+    allContractorWork
+  ] = await Promise.all([
+    optionalSupabaseRequest(
+      `homeowner_updates?property_id=eq.${encodedId}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalSupabaseRequest(
+      `contractor_work_submissions?property_id=eq.${encodedId}&select=*,contractors(business_name,phone,email,license_number,insurance_status)`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalSupabaseRequest(
+      "homeowner_updates?status=eq.active&select=*&order=created_at.desc",
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalSupabaseRequest(
+      "contractor_work_submissions?select=*,contractors(business_name,phone,email,license_number,insurance_status)&order=created_at.desc",
+      {
+        method: "GET"
+      }
+    )
+  ]);
+
+  const homeownerByAddress =
+    allHomeownerUpdates.filter(row =>
+      addressesMatch(
+        propertyAddress,
+        row.property_address
+      )
+    );
+
+  const contractorByAddress =
+    allContractorWork.filter(row =>
+      addressesMatch(
+        propertyAddress,
+        row.property_address
+      )
+    );
+
+  const homeownerUpdates =
+    mergeUniqueRows(
+      homeownerById,
+      homeownerByAddress
+    );
+
+  const contractorWork =
+    mergeUniqueRows(
+      contractorById,
+      contractorByAddress
+    );
+
+  const entries = [
+    ...homeownerUpdates.map(row =>
+      normalizeContributorEntry(
+        row,
+        {
+          propertyId,
+
+          category:
+            "Homeowner Reported Update",
+
+          sourceType:
+            "homeowner_update",
+
+          sourceName:
+            "Homeowner",
+
+          verificationStatus:
+            "homeowner_submitted"
+        }
+      )
+    ),
+
+    ...contractorWork.map(row =>
+      normalizeContributorEntry(
+        row,
+        {
+          propertyId,
+
+          category:
+            "Contractor Work Record",
+
+          sourceType:
+            "contractor_record",
+
+          sourceName:
+            "Contractor",
+
+          verificationStatus:
+            "contractor_submitted"
+        }
+      )
+    )
+  ];
+
+  return {
+    entries,
+
+    counts: {
+      homeownerUpdates:
+        homeownerUpdates.length,
+
+      homeownerByPropertyId:
+        homeownerById.length,
+
+      homeownerByAddress:
+        homeownerByAddress.length,
+
+      contractorWork:
+        contractorWork.length,
+
+      contractorByPropertyId:
+        contractorById.length,
+
+      contractorByAddress:
+        contractorByAddress.length
+    }
+  };
 }
 
 function entryText(entry) {
-  return normalize([
-    entry.category,
-    entry.system_name,
-    entry.statement,
-    entry.source_type,
-    entry.source_name,
-    entry.verification_status,
-    entry.document_type
-  ]
-    .filter(Boolean)
-    .join(" "));
+  return normalize(
+    [
+      entry.category,
+      entry.system_name,
+      entry.statement,
+      entry.source_type,
+      entry.source_name,
+      entry.verification_status,
+      entry.document_type
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
 }
 
 function documentText(document) {
-  return normalize([
-    document.document_type,
-    document.type,
-    document.category,
-    document.title,
-    document.name,
-    document.file_name,
-    document.description,
-    document.source_type,
-    document.source_name
-  ]
-    .filter(Boolean)
-    .join(" "));
+  return normalize(
+    [
+      document.document_type,
+      document.type,
+      document.category,
+      document.title,
+      document.name,
+      document.file_name,
+      document.description,
+      document.source_type,
+      document.source_name
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
 }
 
-function containsAny(text, terms) {
+function containsAny(
+  text,
+  terms
+) {
   return terms.some(term =>
     text.includes(term)
   );
@@ -361,17 +748,26 @@ function countUniqueSystems(entries) {
     ]
   };
 
-  const found = new Set();
+  const found =
+    new Set();
 
   entries.forEach(entry => {
-    const text = entryText(entry);
+    const text =
+      entryText(entry);
 
     Object.entries(systems)
-      .forEach(([system, terms]) => {
-        if (containsAny(text, terms)) {
-          found.add(system);
+      .forEach(
+        ([system, terms]) => {
+          if (
+            containsAny(
+              text,
+              terms
+            )
+          ) {
+            found.add(system);
+          }
         }
-      });
+      );
   });
 
   return found.size;
@@ -381,19 +777,28 @@ function calculatePermitPoints(entries) {
   const permitEntries =
     entries.filter(entry => {
       const status =
-        normalize(entry.verification_status);
+        normalize(
+          entry.verification_status
+        );
 
       const type =
-        normalize(entry.document_type);
+        normalize(
+          entry.document_type
+        );
 
       const text =
         entryText(entry);
 
       return (
-        status === "permit_documented" ||
+        status ===
+          "permit_documented" ||
         type === "permit" ||
-        text.includes("permit documented") ||
-        text.includes("permit found")
+        text.includes(
+          "permit documented"
+        ) ||
+        text.includes(
+          "permit found"
+        )
       );
     });
 
@@ -454,25 +859,38 @@ function calculateHistoryScore(
   }
 
   breakdown.propertyRecord = {
-    label: "Core property record",
-    score: propertyRecordPoints,
-    maximum: 4
+    label:
+      "Core property record",
+
+    score:
+      propertyRecordPoints,
+
+    maximum:
+      4
   };
 
   const permitResult =
     calculatePermitPoints(entries);
 
   breakdown.permitInformation = {
-    label: "Permit information",
-    score: permitResult.points,
-    maximum: 9,
-    count: permitResult.count
+    label:
+      "Permit information",
+
+    score:
+      permitResult.points,
+
+    maximum:
+      9,
+
+    count:
+      permitResult.count
   };
 
   const listingEntries =
     entries.filter(entry =>
-      normalize(entry.source_type) ===
-      "listing_remark"
+      normalize(
+        entry.source_type
+      ) === "listing_remark"
     );
 
   breakdown.publicListingRemarks = {
@@ -484,8 +902,11 @@ function calculateHistoryScore(
         ? 5
         : 0,
 
-    maximum: 5,
-    count: listingEntries.length
+    maximum:
+      5,
+
+    count:
+      listingEntries.length
   };
 
   const datedEntries =
@@ -505,15 +926,19 @@ function calculateHistoryScore(
         ? 8
         : 0,
 
-    maximum: 8,
-    count: datedEntries.length
+    maximum:
+      8,
+
+    count:
+      datedEntries.length
   };
 
   const systemsFound =
     countUniqueSystems(entries);
 
   breakdown.majorSystems = {
-    label: "Major systems mentioned",
+    label:
+      "Major systems mentioned",
 
     score:
       Math.min(
@@ -521,8 +946,11 @@ function calculateHistoryScore(
         systemsFound * 2
       ),
 
-    maximum: 10,
-    count: systemsFound
+    maximum:
+      10,
+
+    count:
+      systemsFound
   };
 
   const homeownerEntries =
@@ -614,17 +1042,20 @@ function calculateHistoryScore(
     }
   };
 
-  const score = clamp(
-    Object.values(breakdown)
-      .reduce(
-        (total, item) =>
-          total +
-          Number(item.score || 0),
-        0
-      ),
-    0,
-    40
-  );
+  const score =
+    clamp(
+      Object.values(breakdown)
+        .reduce(
+          (total, item) =>
+            total +
+            Number(
+              item.score || 0
+            ),
+          0
+        ),
+      0,
+      40
+    );
 
   return {
     score,
@@ -658,9 +1089,15 @@ function calculateDocumentScore(
 
   const rules = [
     {
-      key: "inspectionReport",
-      label: "Inspection Report",
-      maximum: 12,
+      key:
+        "inspectionReport",
+
+      label:
+        "Inspection Report",
+
+      maximum:
+        12,
+
       terms: [
         "inspection report",
         "home inspection"
@@ -668,7 +1105,9 @@ function calculateDocumentScore(
     },
 
     {
-      key: "sellerDisclosure",
+      key:
+        "sellerDisclosure",
+
       label:
         "Seller Property Disclosure",
 
@@ -683,7 +1122,9 @@ function calculateDocumentScore(
     },
 
     {
-      key: "workRepairReceipts",
+      key:
+        "workRepairReceipts",
+
       label:
         "Work / Repair Receipts",
 
@@ -699,9 +1140,14 @@ function calculateDocumentScore(
     },
 
     {
-      key: "hoaDocuments",
-      label: "HOA Documents",
-      maximum: 6,
+      key:
+        "hoaDocuments",
+
+      label:
+        "HOA Documents",
+
+      maximum:
+        6,
 
       terms: [
         "hoa document",
@@ -712,9 +1158,14 @@ function calculateDocumentScore(
     },
 
     {
-      key: "surveySitePlan",
-      label: "Survey / Site Plan",
-      maximum: 6,
+      key:
+        "surveySitePlan",
+
+      label:
+        "Survey / Site Plan",
+
+      maximum:
+        6,
 
       terms: [
         "survey",
@@ -724,7 +1175,9 @@ function calculateDocumentScore(
     },
 
     {
-      key: "hvacMaintenanceReceipt",
+      key:
+        "hvacMaintenanceReceipt",
+
       label:
         "HVAC Maintenance Receipt",
 
@@ -739,7 +1192,9 @@ function calculateDocumentScore(
     },
 
     {
-      key: "newHvacSystemReceipt",
+      key:
+        "newHvacSystemReceipt",
+
       label:
         "New HVAC System Receipt",
 
@@ -755,7 +1210,9 @@ function calculateDocumentScore(
     },
 
     {
-      key: "poolEquipmentWork",
+      key:
+        "poolEquipmentWork",
+
       label:
         "Pool Equipment / Work",
 
@@ -771,9 +1228,14 @@ function calculateDocumentScore(
     },
 
     {
-      key: "solarInformation",
-      label: "Solar Information",
-      maximum: 2,
+      key:
+        "solarInformation",
+
+      label:
+        "Solar Information",
+
+      maximum:
+        2,
 
       terms: [
         "solar",
@@ -813,17 +1275,20 @@ function calculateDocumentScore(
     };
   });
 
-  const score = clamp(
-    Object.values(breakdown)
-      .reduce(
-        (total, item) =>
-          total +
-          Number(item.score || 0),
-        0
-      ),
-    0,
-    60
-  );
+  const score =
+    clamp(
+      Object.values(breakdown)
+        .reduce(
+          (total, item) =>
+            total +
+            Number(
+              item.score || 0
+            ),
+          0
+        ),
+      0,
+      60
+    );
 
   return {
     score,
@@ -833,25 +1298,30 @@ function calculateDocumentScore(
 }
 
 function getMapBaseline(property) {
-  const score = clamp(
-    property.map_rating ??
-    property.current_rating ??
-    0,
-    0,
-    100
-  );
+  const score =
+    clamp(
+      property.map_rating ??
+      property.current_rating ??
+      0,
+      0,
+      100
+    );
 
-  const historyScore = clamp(
-    property.map_history_score ?? 0,
-    0,
-    40
-  );
+  const historyScore =
+    clamp(
+      property.map_history_score ??
+      0,
+      0,
+      40
+    );
 
-  const documentScore = clamp(
-    property.map_document_score ?? 0,
-    0,
-    60
-  );
+  const documentScore =
+    clamp(
+      property.map_document_score ??
+      0,
+      0,
+      60
+    );
 
   const breakdown =
     property.map_rating_breakdown &&
@@ -860,11 +1330,13 @@ function getMapBaseline(property) {
       ? property.map_rating_breakdown
       : {};
 
-  const permitCount = clamp(
-    breakdown.permitCount ?? 0,
-    0,
-    999
-  );
+  const permitCount =
+    clamp(
+      breakdown.permitCount ??
+      0,
+      0,
+      999
+    );
 
   let permitPoints = 0;
 
@@ -898,7 +1370,9 @@ function calculateAdditionalHistory(
       0,
 
       Number(
-        history.permitInformation.score ||
+        history
+          .permitInformation
+          .score ||
         0
       ) -
       Number(
@@ -926,7 +1400,9 @@ function calculateAdditionalHistory(
         ),
 
       centralPermitCount:
-        history.permitInformation.count ||
+        history
+          .permitInformation
+          .count ||
         0,
 
       mapPermitCount:
@@ -947,17 +1423,20 @@ function calculateAdditionalHistory(
       history.contributorRecords
   };
 
-  const score = clamp(
-    Object.values(breakdown)
-      .reduce(
-        (total, item) =>
-          total +
-          Number(item.score || 0),
-        0
-      ),
-    0,
-    40
-  );
+  const score =
+    clamp(
+      Object.values(breakdown)
+        .reduce(
+          (total, item) =>
+            total +
+            Number(
+              item.score || 0
+            ),
+          0
+        ),
+      0,
+      40
+    );
 
   return {
     score,
@@ -1082,22 +1561,23 @@ async function saveRating(
       now
   };
 
-  const rows = await supabaseRequest(
-    `properties?id=eq.${encodeURIComponent(
-      propertyId
-    )}`,
-    {
-      method: "PATCH",
+  const rows =
+    await supabaseRequest(
+      `properties?id=eq.${encodeURIComponent(
+        propertyId
+      )}`,
+      {
+        method: "PATCH",
 
-      headers: {
-        Prefer:
-          "return=representation"
-      },
+        headers: {
+          Prefer:
+            "return=representation"
+        },
 
-      body:
-        JSON.stringify(payload)
-    }
-  );
+        body:
+          JSON.stringify(payload)
+      }
+    );
 
   return Array.isArray(rows)
     ? rows[0] || null
@@ -1177,10 +1657,20 @@ export default async function handler(
       });
     }
 
-    const entries =
+    const reportEntries =
       await loadPropertyEntries(
         property.id
       );
+
+    const contributorResult =
+      await loadContributorEntries(
+        property
+      );
+
+    const entries = [
+      ...reportEntries,
+      ...contributorResult.entries
+    ];
 
     const documents =
       await loadPropertyDocuments(
@@ -1216,27 +1706,30 @@ export default async function handler(
         mapBaseline.documentScore
       );
 
-    const finalHistoryScore = clamp(
-      mapBaseline.historyScore +
-      additionalHistory.score,
-      0,
-      40
-    );
+    const finalHistoryScore =
+      clamp(
+        mapBaseline.historyScore +
+        additionalHistory.score,
+        0,
+        40
+      );
 
-    const finalDocumentScore = clamp(
-      mapBaseline.documentScore +
-      additionalDocumentScore,
-      0,
-      60
-    );
+    const finalDocumentScore =
+      clamp(
+        mapBaseline.documentScore +
+        additionalDocumentScore,
+        0,
+        60
+      );
 
-    const finalScore = clamp(
-      mapBaseline.score +
-      additionalHistory.score +
-      additionalDocumentScore,
-      0,
-      100
-    );
+    const finalScore =
+      clamp(
+        mapBaseline.score +
+        additionalHistory.score +
+        additionalDocumentScore,
+        0,
+        100
+      );
 
     const improvementItems =
       buildImprovementItems(
@@ -1251,15 +1744,16 @@ export default async function handler(
             normalize(
               entry.source_type ||
               "unknown"
-            )
-              .replace(
-                /[^a-z0-9]+/g,
-                "_"
-              );
+            ).replace(
+              /[^a-z0-9]+/g,
+              "_"
+            );
 
           counts[source] =
-            (counts[source] || 0) +
-            1;
+            (
+              counts[source] ||
+              0
+            ) + 1;
 
           return counts;
         },
@@ -1306,8 +1800,11 @@ export default async function handler(
         additionalDocumentation:
           additionalDocumentScore,
 
-        finalHistoryScore,
-        finalDocumentScore,
+        finalHistoryScore:
+          finalHistoryScore,
+
+        finalDocumentScore:
+          finalDocumentScore,
 
         history:
           additionalHistory.breakdown,
@@ -1320,7 +1817,42 @@ export default async function handler(
 
       inputCounts: {
         reportEntries:
-          entries.length,
+          reportEntries.length,
+
+        contributorEntries:
+          contributorResult
+            .entries
+            .length,
+
+        homeownerUpdates:
+          contributorResult
+            .counts
+            .homeownerUpdates,
+
+        homeownerByPropertyId:
+          contributorResult
+            .counts
+            .homeownerByPropertyId,
+
+        homeownerByAddress:
+          contributorResult
+            .counts
+            .homeownerByAddress,
+
+        contractorWork:
+          contributorResult
+            .counts
+            .contractorWork,
+
+        contractorByPropertyId:
+          contributorResult
+            .counts
+            .contractorByPropertyId,
+
+        contractorByAddress:
+          contributorResult
+            .counts
+            .contractorByAddress,
 
         propertyDocuments:
           documents.length,
