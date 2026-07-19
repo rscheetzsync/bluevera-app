@@ -14,21 +14,154 @@ function clean(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeAddress(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[.,#]/g, " ")
+    .replace(/\bwest\b/g, "w")
+    .replace(/\beast\b/g, "e")
+    .replace(/\bnorth\b/g, "n")
+    .replace(/\bsouth\b/g, "s")
+    .replace(/\bavenue\b/g, "ave")
+    .replace(/\bstreet\b/g, "st")
+    .replace(/\bdrive\b/g, "dr")
+    .replace(/\broad\b/g, "rd")
+    .replace(/\bboulevard\b/g, "blvd")
+    .replace(/\bplace\b/g, "pl")
+    .replace(/\bcourt\b/g, "ct")
+    .replace(/\bcircle\b/g, "cir")
+    .replace(/\blane\b/g, "ln")
+    .replace(/\bterrace\b/g, "ter")
+    .replace(/\bparkway\b/g, "pkwy")
+    .replace(
+      /\b(arizona|az|phoenix|glendale|scottsdale|tempe|mesa|chandler|gilbert|paradise valley)\b/g,
+      " "
+    )
+    .replace(/\b\d{5}(?:-\d{4})?\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function addressParts(value) {
+  const normalized = normalizeAddress(value);
+  const parts = normalized
+    .split(" ")
+    .filter(Boolean);
+
+  const number =
+    parts.find(part =>
+      /^\d+[a-z]?$/.test(part)
+    ) || "";
+
+  const words =
+    parts.filter(part =>
+      !/^\d+[a-z]?$/.test(part)
+    );
+
+  return {
+    normalized,
+    number,
+    words
+  };
+}
+
+function addressesMatch(firstAddress, secondAddress) {
+  const first =
+    addressParts(firstAddress);
+
+  const second =
+    addressParts(secondAddress);
+
+  if (
+    !first.normalized ||
+    !second.normalized
+  ) {
+    return false;
+  }
+
+  if (
+    first.number &&
+    second.number &&
+    first.number !== second.number
+  ) {
+    return false;
+  }
+
+  if (
+    first.normalized ===
+    second.normalized
+  ) {
+    return true;
+  }
+
+  if (
+    first.normalized.includes(
+      second.normalized
+    ) ||
+    second.normalized.includes(
+      first.normalized
+    )
+  ) {
+    return true;
+  }
+
+  const sharedWords =
+    first.words.filter(word =>
+      word.length >= 3 &&
+      second.words.includes(word)
+    );
+
+  return sharedWords.length >= 1;
+}
+
+function mergeUniqueRows(...groups) {
+  const rows = new Map();
+
+  groups.flat().forEach(row => {
+    if (!row) {
+      return;
+    }
+
+    const key =
+      clean(row.id) ||
+      [
+        clean(row.property_id),
+        clean(row.property_address),
+        clean(row.created_at),
+        clean(row.statement),
+        clean(row.description),
+        clean(row.note)
+      ].join("|");
+
+    if (!rows.has(key)) {
+      rows.set(key, row);
+    }
+  });
+
+  return Array.from(rows.values());
+}
+
 async function rest(path, options = {}) {
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/${path}`,
     {
       ...options,
+
       headers: {
         apikey: SERVICE_KEY,
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
+        Authorization:
+          `Bearer ${SERVICE_KEY}`,
+
+        "Content-Type":
+          "application/json",
+
         ...(options.headers || {})
       }
     }
   );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   let data = null;
 
@@ -44,6 +177,7 @@ async function rest(path, options = {}) {
     throw new Error(
       data?.message ||
       data?.error ||
+      data?.hint ||
       text ||
       `Supabase request failed (${response.status}).`
     );
@@ -57,10 +191,8 @@ async function optionalRest(
   options = {}
 ) {
   try {
-    const data = await rest(
-      path,
-      options
-    );
+    const data =
+      await rest(path, options);
 
     return Array.isArray(data)
       ? data
@@ -82,7 +214,8 @@ function firstValue(
   fallback = ""
 ) {
   for (const key of keys) {
-    const value = row?.[key];
+    const value =
+      row?.[key];
 
     if (
       value !== null &&
@@ -98,22 +231,8 @@ function firstValue(
 
 function normalizeEvidenceRow(
   row,
-  sourceDefaults = {}
+  defaults = {}
 ) {
-  const eventYear =
-    firstValue(
-      row,
-      [
-        "event_year",
-        "year",
-        "service_year",
-        "work_year",
-        "installed_year",
-        "replacement_year"
-      ],
-      null
-    );
-
   const statement =
     firstValue(
       row,
@@ -122,6 +241,7 @@ function normalizeEvidenceRow(
         "description",
         "work_description",
         "update_description",
+        "note",
         "notes",
         "details",
         "summary",
@@ -137,14 +257,14 @@ function normalizeEvidenceRow(
       firstValue(
         row,
         ["id"],
-        `${sourceDefaults.sourceType || "record"}-${Math.random()}`
+        `${defaults.sourceType || "record"}-${Math.random()}`
       ),
 
     property_id:
       firstValue(
         row,
         ["property_id"],
-        sourceDefaults.propertyId || null
+        defaults.propertyId || null
       ),
 
     category:
@@ -157,7 +277,8 @@ function normalizeEvidenceRow(
           "work_type",
           "document_type"
         ],
-        sourceDefaults.category || "Property Record"
+        defaults.category ||
+        "Property Record"
       ),
 
     system_name:
@@ -168,13 +289,26 @@ function normalizeEvidenceRow(
           "system",
           "home_system",
           "trade",
-          "service_type"
+          "service_type",
+          "update_type",
+          "work_type"
         ],
-        sourceDefaults.systemName || "—"
+        defaults.systemName || "—"
       ),
 
     event_year:
-      eventYear,
+      firstValue(
+        row,
+        [
+          "event_year",
+          "year",
+          "service_year",
+          "work_year",
+          "installed_year",
+          "replacement_year"
+        ],
+        null
+      ),
 
     event_date:
       firstValue(
@@ -183,8 +317,10 @@ function normalizeEvidenceRow(
           "event_date",
           "service_date",
           "work_date",
+          "completed_date",
           "completed_at",
-          "inspection_date"
+          "inspection_date",
+          "approximate_date"
         ],
         null
       ),
@@ -196,7 +332,8 @@ function normalizeEvidenceRow(
       firstValue(
         row,
         ["source_type"],
-        sourceDefaults.sourceType || "property_record"
+        defaults.sourceType ||
+        "property_record"
       ),
 
     source_name:
@@ -207,9 +344,11 @@ function normalizeEvidenceRow(
           "business_name",
           "contractor_name",
           "homeowner_name",
-          "company_name"
+          "company_name",
+          "contractor",
+          "email"
         ],
-        sourceDefaults.sourceName || ""
+        defaults.sourceName || ""
       ),
 
     verification_status:
@@ -220,7 +359,8 @@ function normalizeEvidenceRow(
           "status",
           "record_status"
         ],
-        sourceDefaults.verificationStatus || "submitted"
+        defaults.verificationStatus ||
+        "submitted"
       ),
 
     document_type:
@@ -228,10 +368,9 @@ function normalizeEvidenceRow(
         row,
         [
           "document_type",
-          "file_type",
-          "category"
+          "file_type"
         ],
-        sourceDefaults.documentType || ""
+        defaults.documentType || ""
       ),
 
     document_url:
@@ -252,7 +391,10 @@ function normalizeEvidenceRow(
     created_at:
       firstValue(
         row,
-        ["created_at", "submitted_at"],
+        [
+          "created_at",
+          "submitted_at"
+        ],
         null
       ),
 
@@ -269,36 +411,42 @@ function normalizeEvidenceRow(
       ),
 
     original_table:
-      sourceDefaults.originalTable || ""
+      defaults.originalTable || ""
   };
 }
 
 function sortEvidenceRows(rows) {
-  return [...rows].sort((a, b) => {
-    const aDate =
-      Date.parse(
-        a.updated_at ||
-        a.created_at ||
-        a.event_date ||
-        ""
-      ) || 0;
+  return [...rows].sort(
+    (first, second) => {
+      const firstDate =
+        Date.parse(
+          first.updated_at ||
+          first.created_at ||
+          first.event_date ||
+          ""
+        ) || 0;
 
-    const bDate =
-      Date.parse(
-        b.updated_at ||
-        b.created_at ||
-        b.event_date ||
-        ""
-      ) || 0;
+      const secondDate =
+        Date.parse(
+          second.updated_at ||
+          second.created_at ||
+          second.event_date ||
+          ""
+        ) || 0;
 
-    return bDate - aDate;
-  });
+      return secondDate - firstDate;
+    }
+  );
 }
 
 async function verifyAdmin(req) {
-  const token = clean(
-    req.headers.authorization
-  ).replace(/^Bearer\s+/i, "");
+  const token =
+    clean(
+      req.headers.authorization
+    ).replace(
+      /^Bearer\s+/i,
+      ""
+    );
 
   if (!token) {
     throw new Error(
@@ -311,16 +459,21 @@ async function verifyAdmin(req) {
     {
       headers: {
         apikey: ANON_KEY,
-        Authorization: `Bearer ${token}`
+        Authorization:
+          `Bearer ${token}`
       }
     }
   );
 
-  const user = await response
-    .json()
-    .catch(() => null);
+  const user =
+    await response
+      .json()
+      .catch(() => null);
 
-  if (!response.ok || !user?.id) {
+  if (
+    !response.ok ||
+    !user?.id
+  ) {
     throw new Error(
       "The admin login session is invalid or expired."
     );
@@ -333,9 +486,9 @@ async function verifyAdmin(req) {
     }
   );
 
-  const email = clean(
-    user.email
-  ).toLowerCase();
+  const email =
+    clean(user.email)
+      .toLowerCase();
 
   const admin = (
     Array.isArray(admins)
@@ -371,11 +524,12 @@ async function verifyAdmin(req) {
     );
   }
 
-  const status = clean(
-    admin.status ||
-    admin.account_status ||
-    "active"
-  ).toLowerCase();
+  const status =
+    clean(
+      admin.status ||
+      admin.account_status ||
+      "active"
+    ).toLowerCase();
 
   if (
     [
@@ -403,9 +557,10 @@ async function searchProperties(query) {
     return [];
   }
 
-  const encoded = encodeURIComponent(
-    `*${q}*`
-  );
+  const encoded =
+    encodeURIComponent(
+      `*${q}*`
+    );
 
   const uuidLike =
     /^[0-9a-f-]{30,}$/i.test(q);
@@ -414,21 +569,21 @@ async function searchProperties(query) {
 
   if (uuidLike) {
     path =
-      `properties?or=(` +
+      "properties?or=(" +
       `id.eq.${encodeURIComponent(q)},` +
       `full_address.ilike.${encoded},` +
       `normalized_address.ilike.${encoded},` +
       `apn.ilike.${encoded}` +
-      `)&select=*&limit=25`;
+      ")&select=*&limit=25";
   } else {
     path =
-      `properties?or=(` +
+      "properties?or=(" +
       `full_address.ilike.${encoded},` +
       `address.ilike.${encoded},` +
       `street.ilike.${encoded},` +
       `normalized_address.ilike.${encoded},` +
       `apn.ilike.${encoded}` +
-      `)&select=*&limit=25`;
+      ")&select=*&limit=25";
   }
 
   const rows = await rest(
@@ -443,31 +598,53 @@ async function searchProperties(query) {
     : [];
 }
 
-async function loadProperty(
-  propertyId
-) {
-  const id = encodeURIComponent(
-    clean(propertyId)
-  );
+async function loadProperty(propertyId) {
+  const rawPropertyId =
+    clean(propertyId);
+
+  const id =
+    encodeURIComponent(
+      rawPropertyId
+    );
+
+  const properties =
+    await rest(
+      `properties?id=eq.${id}&select=*&limit=1`,
+      {
+        method: "GET"
+      }
+    );
+
+  const property =
+    Array.isArray(properties)
+      ? properties[0]
+      : null;
+
+  if (!property) {
+    throw new Error(
+      "The central property record was not found."
+    );
+  }
+
+  const propertyAddress =
+    clean(
+      property.full_address ||
+      property.address ||
+      property.street
+    );
 
   const [
-    properties,
     reportEntries,
     adjustments,
-    homeownerUpdates,
-    contractorWork,
+    homeownerById,
+    contractorById,
+    allHomeownerUpdates,
+    allContractorWork,
     contractorDocuments,
     propertyDocuments,
     sellerDocuments,
     propertyHistoryItems
   ] = await Promise.all([
-    rest(
-      `properties?id=eq.${id}&select=*&limit=1`,
-      {
-        method: "GET"
-      }
-    ),
-
     optionalRest(
       `property_report_entries?property_id=eq.${id}&select=*`,
       {
@@ -490,7 +667,21 @@ async function loadProperty(
     ),
 
     optionalRest(
-      `contractor_work_submissions?property_id=eq.${id}&select=*`,
+      `contractor_work_submissions?property_id=eq.${id}&select=*,contractors(business_name,phone,email,license_number,insurance_status)`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      "homeowner_updates?status=eq.active&select=*&order=created_at.desc",
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      "contractor_work_submissions?select=*,contractors(business_name,phone,email,license_number,insurance_status)&order=created_at.desc",
       {
         method: "GET"
       }
@@ -525,24 +716,41 @@ async function loadProperty(
     )
   ]);
 
-  const property = Array.isArray(
-    properties
-  )
-    ? properties[0]
-    : null;
-
-  if (!property) {
-    throw new Error(
-      "The central property record was not found."
+  const homeownerByAddress =
+    allHomeownerUpdates.filter(row =>
+      addressesMatch(
+        propertyAddress,
+        row.property_address
+      )
     );
-  }
 
-  const normalizedEntries = [
+  const contractorByAddress =
+    allContractorWork.filter(row =>
+      addressesMatch(
+        propertyAddress,
+        row.property_address
+      )
+    );
+
+  const homeownerUpdates =
+    mergeUniqueRows(
+      homeownerById,
+      homeownerByAddress
+    );
+
+  const contractorWork =
+    mergeUniqueRows(
+      contractorById,
+      contractorByAddress
+    );
+
+  const entries = [
     ...reportEntries.map(row =>
       normalizeEvidenceRow(
         row,
         {
           propertyId: property.id,
+
           originalTable:
             "property_report_entries"
         }
@@ -551,17 +759,47 @@ async function loadProperty(
 
     ...homeownerUpdates.map(row =>
       normalizeEvidenceRow(
-        row,
         {
-          propertyId: property.id,
+          ...row,
+
+          statement:
+            row.note ||
+            row.update_type ||
+            "Homeowner update",
+
+          system_name:
+            row.update_type ||
+            "Homeowner update",
+
+          event_date:
+            row.approximate_date ||
+            row.created_at,
+
+          source_name:
+            row.contractor ||
+            row.email ||
+            "Homeowner",
+
+          verification_status:
+            row.record_status ||
+            "homeowner_submitted"
+        },
+        {
+          propertyId:
+            property.id,
+
           category:
             "Homeowner Reported Update",
+
           sourceType:
             "homeowner_update",
+
           sourceName:
             "Homeowner",
+
           verificationStatus:
             "homeowner_submitted",
+
           originalTable:
             "homeowner_updates"
         }
@@ -570,17 +808,53 @@ async function loadProperty(
 
     ...contractorWork.map(row =>
       normalizeEvidenceRow(
-        row,
         {
-          propertyId: property.id,
+          ...row,
+
+          statement:
+            row.description ||
+            row.work_type ||
+            "Contractor work record",
+
+          system_name:
+            row.work_type ||
+            "Contractor work",
+
+          event_date:
+            row.completed_date ||
+            row.created_at,
+
+          source_name:
+            row.contractors
+              ?.business_name ||
+            row.contractor_name ||
+            "Contractor",
+
+          verification_status:
+            row.status ||
+            "contractor_submitted",
+
+          document_type:
+            row.permit_number
+              ? "Permit reference"
+              : ""
+        },
+        {
+          propertyId:
+            property.id,
+
           category:
             "Contractor Work Record",
+
           sourceType:
             "contractor_record",
+
           sourceName:
             "Contractor",
+
           verificationStatus:
             "contractor_submitted",
+
           originalTable:
             "contractor_work_submissions"
         }
@@ -591,15 +865,21 @@ async function loadProperty(
       normalizeEvidenceRow(
         row,
         {
-          propertyId: property.id,
+          propertyId:
+            property.id,
+
           category:
             "Contractor Document",
+
           sourceType:
             "contractor_document",
+
           sourceName:
             "Contractor",
+
           verificationStatus:
             "document_uploaded",
+
           originalTable:
             "contractor_documents"
         }
@@ -610,15 +890,21 @@ async function loadProperty(
       normalizeEvidenceRow(
         row,
         {
-          propertyId: property.id,
+          propertyId:
+            property.id,
+
           category:
             "Property Document",
+
           sourceType:
             "property_document",
+
           sourceName:
             "BlueVera Document",
+
           verificationStatus:
             "document_uploaded",
+
           originalTable:
             "property_documents"
         }
@@ -629,15 +915,21 @@ async function loadProperty(
       normalizeEvidenceRow(
         row,
         {
-          propertyId: property.id,
+          propertyId:
+            property.id,
+
           category:
             "Seller Document",
+
           sourceType:
             "seller_document",
+
           sourceName:
             "Seller",
+
           verificationStatus:
             "document_uploaded",
+
           originalTable:
             "seller_documents"
         }
@@ -648,15 +940,21 @@ async function loadProperty(
       normalizeEvidenceRow(
         row,
         {
-          propertyId: property.id,
+          propertyId:
+            property.id,
+
           category:
             "Property History Item",
+
           sourceType:
             "property_history",
+
           sourceName:
             "BlueVera",
+
           verificationStatus:
             "recorded",
+
           originalTable:
             "property_history_items"
         }
@@ -671,10 +969,11 @@ async function loadProperty(
 
   const adjustmentTotal =
     adjustmentRows.reduce(
-      (sum, row) =>
-        sum +
+      (total, row) =>
+        total +
         Number(
-          row.adjustment_points || 0
+          row.adjustment_points ||
+          0
         ),
       0
     );
@@ -683,9 +982,7 @@ async function loadProperty(
     property,
 
     entries:
-      sortEvidenceRows(
-        normalizedEntries
-      ),
+      sortEvidenceRows(entries),
 
     adjustments:
       adjustmentRows,
@@ -699,8 +996,20 @@ async function loadProperty(
       homeownerUpdates:
         homeownerUpdates.length,
 
+      homeownerByPropertyId:
+        homeownerById.length,
+
+      homeownerByAddress:
+        homeownerByAddress.length,
+
       contractorWork:
         contractorWork.length,
+
+      contractorByPropertyId:
+        contractorById.length,
+
+      contractorByAddress:
+        contractorByAddress.length,
 
       contractorDocuments:
         contractorDocuments.length,
@@ -733,7 +1042,9 @@ async function callCentralRecalculation(
       method: "POST",
 
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type":
+          "application/json",
+
         Authorization:
           req.headers.authorization
       },
@@ -744,9 +1055,10 @@ async function callCentralRecalculation(
     }
   );
 
-  const result = await response
-    .json()
-    .catch(() => ({}));
+  const result =
+    await response
+      .json()
+      .catch(() => ({}));
 
   if (
     !response.ok ||
@@ -802,7 +1114,8 @@ async function saveAdjustment(
       adminContext.user.id,
 
     admin_email:
-      adminContext.user.email || null,
+      adminContext.user.email ||
+      null,
 
     created_at:
       new Date().toISOString()
@@ -859,15 +1172,11 @@ export default async function handler(
     const adminContext =
       await verifyAdmin(req);
 
-    if (
-      req.method === "GET"
-    ) {
+    if (req.method === "GET") {
       const action =
         clean(req.query.action);
 
-      if (
-        action === "search"
-      ) {
+      if (action === "search") {
         const properties =
           await searchProperties(
             req.query.q
@@ -879,9 +1188,7 @@ export default async function handler(
         });
       }
 
-      if (
-        action === "load"
-      ) {
+      if (action === "load") {
         const result =
           await loadProperty(
             req.query.id
@@ -901,9 +1208,7 @@ export default async function handler(
       });
     }
 
-    if (
-      req.method === "POST"
-    ) {
+    if (req.method === "POST") {
       const body =
         typeof req.body === "string"
           ? JSON.parse(req.body)
@@ -927,9 +1232,7 @@ export default async function handler(
         });
       }
 
-      if (
-        action === "recalculate"
-      ) {
+      if (action === "recalculate") {
         const rating =
           await callCentralRecalculation(
             req,
@@ -942,9 +1245,7 @@ export default async function handler(
         });
       }
 
-      if (
-        action === "adjust"
-      ) {
+      if (action === "adjust") {
         const adjustment =
           await saveAdjustment(
             propertyId,
@@ -969,6 +1270,7 @@ export default async function handler(
 
     return res.status(405).json({
       success: false,
+
       error:
         "Method not allowed."
     });
