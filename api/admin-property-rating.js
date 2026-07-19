@@ -52,6 +52,249 @@ async function rest(path, options = {}) {
   return data;
 }
 
+async function optionalRest(
+  path,
+  options = {}
+) {
+  try {
+    const data = await rest(
+      path,
+      options
+    );
+
+    return Array.isArray(data)
+      ? data
+      : [];
+  } catch (error) {
+    console.warn(
+      "Optional property source unavailable:",
+      path,
+      error?.message
+    );
+
+    return [];
+  }
+}
+
+function firstValue(
+  row,
+  keys,
+  fallback = ""
+) {
+  for (const key of keys) {
+    const value = row?.[key];
+
+    if (
+      value !== null &&
+      value !== undefined &&
+      clean(value) !== ""
+    ) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeEvidenceRow(
+  row,
+  sourceDefaults = {}
+) {
+  const eventYear =
+    firstValue(
+      row,
+      [
+        "event_year",
+        "year",
+        "service_year",
+        "work_year",
+        "installed_year",
+        "replacement_year"
+      ],
+      null
+    );
+
+  const statement =
+    firstValue(
+      row,
+      [
+        "statement",
+        "description",
+        "work_description",
+        "update_description",
+        "notes",
+        "details",
+        "summary",
+        "title",
+        "document_name",
+        "file_name"
+      ],
+      "Record available"
+    );
+
+  return {
+    id:
+      firstValue(
+        row,
+        ["id"],
+        `${sourceDefaults.sourceType || "record"}-${Math.random()}`
+      ),
+
+    property_id:
+      firstValue(
+        row,
+        ["property_id"],
+        sourceDefaults.propertyId || null
+      ),
+
+    category:
+      firstValue(
+        row,
+        [
+          "category",
+          "record_category",
+          "update_type",
+          "work_type",
+          "document_type"
+        ],
+        sourceDefaults.category || "Property Record"
+      ),
+
+    system_name:
+      firstValue(
+        row,
+        [
+          "system_name",
+          "system",
+          "home_system",
+          "trade",
+          "service_type"
+        ],
+        sourceDefaults.systemName || "—"
+      ),
+
+    event_year:
+      eventYear,
+
+    event_date:
+      firstValue(
+        row,
+        [
+          "event_date",
+          "service_date",
+          "work_date",
+          "completed_at",
+          "inspection_date"
+        ],
+        null
+      ),
+
+    statement:
+      clean(statement),
+
+    source_type:
+      firstValue(
+        row,
+        ["source_type"],
+        sourceDefaults.sourceType || "property_record"
+      ),
+
+    source_name:
+      firstValue(
+        row,
+        [
+          "source_name",
+          "business_name",
+          "contractor_name",
+          "homeowner_name",
+          "company_name"
+        ],
+        sourceDefaults.sourceName || ""
+      ),
+
+    verification_status:
+      firstValue(
+        row,
+        [
+          "verification_status",
+          "status",
+          "record_status"
+        ],
+        sourceDefaults.verificationStatus || "submitted"
+      ),
+
+    document_type:
+      firstValue(
+        row,
+        [
+          "document_type",
+          "file_type",
+          "category"
+        ],
+        sourceDefaults.documentType || ""
+      ),
+
+    document_url:
+      firstValue(
+        row,
+        [
+          "document_url",
+          "file_url",
+          "report_url",
+          "receipt_url",
+          "invoice_url",
+          "storage_url",
+          "public_url"
+        ],
+        ""
+      ),
+
+    created_at:
+      firstValue(
+        row,
+        ["created_at", "submitted_at"],
+        null
+      ),
+
+    updated_at:
+      firstValue(
+        row,
+        [
+          "updated_at",
+          "modified_at",
+          "created_at",
+          "submitted_at"
+        ],
+        null
+      ),
+
+    original_table:
+      sourceDefaults.originalTable || ""
+  };
+}
+
+function sortEvidenceRows(rows) {
+  return [...rows].sort((a, b) => {
+    const aDate =
+      Date.parse(
+        a.updated_at ||
+        a.created_at ||
+        a.event_date ||
+        ""
+      ) || 0;
+
+    const bDate =
+      Date.parse(
+        b.updated_at ||
+        b.created_at ||
+        b.event_date ||
+        ""
+      ) || 0;
+
+    return bDate - aDate;
+  });
+}
+
 async function verifyAdmin(req) {
   const token = clean(
     req.headers.authorization
@@ -209,8 +452,14 @@ async function loadProperty(
 
   const [
     properties,
-    entries,
-    adjustments
+    reportEntries,
+    adjustments,
+    homeownerUpdates,
+    contractorWork,
+    contractorDocuments,
+    propertyDocuments,
+    sellerDocuments,
+    propertyHistoryItems
   ] = await Promise.all([
     rest(
       `properties?id=eq.${id}&select=*&limit=1`,
@@ -219,8 +468,8 @@ async function loadProperty(
       }
     ),
 
-    rest(
-      `property_report_entries?property_id=eq.${id}&select=*&order=updated_at.desc`,
+    optionalRest(
+      `property_report_entries?property_id=eq.${id}&select=*`,
       {
         method: "GET"
       }
@@ -228,6 +477,48 @@ async function loadProperty(
 
     rest(
       `property_rating_adjustments?property_id=eq.${id}&select=*&order=created_at.desc`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `homeowner_updates?property_id=eq.${id}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `contractor_work_submissions?property_id=eq.${id}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `contractor_documents?property_id=eq.${id}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `property_documents?property_id=eq.${id}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `seller_documents?property_id=eq.${id}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalRest(
+      `property_history_items?property_id=eq.${id}&select=*`,
       {
         method: "GET"
       }
@@ -245,6 +536,133 @@ async function loadProperty(
       "The central property record was not found."
     );
   }
+
+  const normalizedEntries = [
+    ...reportEntries.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          originalTable:
+            "property_report_entries"
+        }
+      )
+    ),
+
+    ...homeownerUpdates.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Homeowner Reported Update",
+          sourceType:
+            "homeowner_update",
+          sourceName:
+            "Homeowner",
+          verificationStatus:
+            "homeowner_submitted",
+          originalTable:
+            "homeowner_updates"
+        }
+      )
+    ),
+
+    ...contractorWork.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Contractor Work Record",
+          sourceType:
+            "contractor_record",
+          sourceName:
+            "Contractor",
+          verificationStatus:
+            "contractor_submitted",
+          originalTable:
+            "contractor_work_submissions"
+        }
+      )
+    ),
+
+    ...contractorDocuments.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Contractor Document",
+          sourceType:
+            "contractor_document",
+          sourceName:
+            "Contractor",
+          verificationStatus:
+            "document_uploaded",
+          originalTable:
+            "contractor_documents"
+        }
+      )
+    ),
+
+    ...propertyDocuments.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Property Document",
+          sourceType:
+            "property_document",
+          sourceName:
+            "BlueVera Document",
+          verificationStatus:
+            "document_uploaded",
+          originalTable:
+            "property_documents"
+        }
+      )
+    ),
+
+    ...sellerDocuments.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Seller Document",
+          sourceType:
+            "seller_document",
+          sourceName:
+            "Seller",
+          verificationStatus:
+            "document_uploaded",
+          originalTable:
+            "seller_documents"
+        }
+      )
+    ),
+
+    ...propertyHistoryItems.map(row =>
+      normalizeEvidenceRow(
+        row,
+        {
+          propertyId: property.id,
+          category:
+            "Property History Item",
+          sourceType:
+            "property_history",
+          sourceName:
+            "BlueVera",
+          verificationStatus:
+            "recorded",
+          originalTable:
+            "property_history_items"
+        }
+      )
+    )
+  ];
 
   const adjustmentRows =
     Array.isArray(adjustments)
@@ -265,14 +683,37 @@ async function loadProperty(
     property,
 
     entries:
-      Array.isArray(entries)
-        ? entries
-        : [],
+      sortEvidenceRows(
+        normalizedEntries
+      ),
 
     adjustments:
       adjustmentRows,
 
-    adjustmentTotal
+    adjustmentTotal,
+
+    evidenceCounts: {
+      listingAndReportEntries:
+        reportEntries.length,
+
+      homeownerUpdates:
+        homeownerUpdates.length,
+
+      contractorWork:
+        contractorWork.length,
+
+      contractorDocuments:
+        contractorDocuments.length,
+
+      propertyDocuments:
+        propertyDocuments.length,
+
+      sellerDocuments:
+        sellerDocuments.length,
+
+      propertyHistoryItems:
+        propertyHistoryItems.length
+    }
   };
 }
 
