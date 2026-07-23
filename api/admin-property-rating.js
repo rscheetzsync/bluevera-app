@@ -44,6 +44,7 @@ function normalizeAddress(value) {
 
 function addressParts(value) {
   const normalized = normalizeAddress(value);
+
   const parts = normalized
     .split(" ")
     .filter(Boolean);
@@ -1189,9 +1190,32 @@ export default async function handler(
       }
 
       if (action === "load") {
+        const propertyId =
+          clean(req.query.id);
+
+        if (!propertyId) {
+          return res.status(400).json({
+            success: false,
+
+            error:
+              "A property ID is required."
+          });
+        }
+
+        /*
+          Always refresh the central rating before returning a property to
+          the manager. The manual button remains available as a backup, but
+          an admin should never have to click it just to see the current
+          evidence-based score.
+        */
+        await callCentralRecalculation(
+          req,
+          propertyId
+        );
+
         const result =
           await loadProperty(
-            req.query.id
+            propertyId
           );
 
         return res.status(200).json({
