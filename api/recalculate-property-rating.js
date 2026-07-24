@@ -73,23 +73,20 @@ function normalizeAddress(value) {
 }
 
 function addressParts(value) {
-  const normalized =
-    normalizeAddress(value);
+  const normalized = normalizeAddress(value);
 
-  const parts =
-    normalized
-      .split(" ")
-      .filter(Boolean);
+  const parts = normalized
+    .split(" ")
+    .filter(Boolean);
 
   const number =
     parts.find(part =>
       /^\d+[a-z]?$/.test(part)
     ) || "";
 
-  const words =
-    parts.filter(part =>
-      !/^\d+[a-z]?$/.test(part)
-    );
+  const words = parts.filter(
+    part => !/^\d+[a-z]?$/.test(part)
+  );
 
   return {
     normalized,
@@ -102,11 +99,8 @@ function addressesMatch(
   firstAddress,
   secondAddress
 ) {
-  const first =
-    addressParts(firstAddress);
-
-  const second =
-    addressParts(secondAddress);
+  const first = addressParts(firstAddress);
+  const second = addressParts(secondAddress);
 
   if (
     !first.normalized ||
@@ -124,8 +118,7 @@ function addressesMatch(
   }
 
   if (
-    first.normalized ===
-    second.normalized
+    first.normalized === second.normalized
   ) {
     return true;
   }
@@ -141,11 +134,11 @@ function addressesMatch(
     return true;
   }
 
-  const sharedWords =
-    first.words.filter(word =>
+  const sharedWords = first.words.filter(
+    word =>
       word.length >= 3 &&
       second.words.includes(word)
-    );
+  );
 
   return sharedWords.length >= 1;
 }
@@ -154,9 +147,7 @@ function mergeUniqueRows(...groups) {
   const rows = new Map();
 
   groups.flat().forEach(row => {
-    if (!row) {
-      return;
-    }
+    if (!row) return;
 
     const key =
       clean(row.id) ||
@@ -175,6 +166,78 @@ function mergeUniqueRows(...groups) {
   });
 
   return Array.from(rows.values());
+}
+
+function dedupeHomeownerUpdates(rows) {
+  const unique = new Map();
+
+  (Array.isArray(rows) ? rows : [])
+    .forEach((row, index) => {
+      const key =
+        clean(
+          row?.update_type ||
+          row?.system_name ||
+          row?.category ||
+          row?.title ||
+          row?.work_type
+        )
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim() ||
+        `record-${clean(row?.id) || index}`;
+
+      const existing = unique.get(key);
+
+      const rank = item => {
+        const status = clean(
+          item?.verification_status ||
+          item?.record_status ||
+          item?.status
+        ).toLowerCase();
+
+        return {
+          evidence:
+            /verified/.test(status)
+              ? 3
+              : /documented|receipt|invoice|permit/.test(
+                  status
+                )
+              ? 2
+              : 1,
+
+          time:
+            Date.parse(
+              item?.updated_at ||
+              item?.created_at ||
+              item?.completed_date ||
+              item?.approximate_date ||
+              ""
+            ) || 0
+        };
+      };
+
+      if (!existing) {
+        unique.set(key, row);
+        return;
+      }
+
+      const oldRank = rank(existing);
+      const newRank = rank(row);
+
+      if (
+        newRank.evidence >
+          oldRank.evidence ||
+        (
+          newRank.evidence ===
+            oldRank.evidence &&
+          newRank.time > oldRank.time
+        )
+      ) {
+        unique.set(key, row);
+      }
+    });
+
+  return Array.from(unique.values());
 }
 
 function ratingBand(score) {
@@ -221,8 +284,7 @@ async function supabaseRequest(
     }
   );
 
-  const text =
-    await response.text();
+  const text = await response.text();
 
   let data = null;
 
@@ -252,11 +314,10 @@ async function optionalSupabaseRequest(
   options = {}
 ) {
   try {
-    const data =
-      await supabaseRequest(
-        path,
-        options
-      );
+    const data = await supabaseRequest(
+      path,
+      options
+    );
 
     return Array.isArray(data)
       ? data
@@ -276,10 +337,9 @@ async function verifySupabaseUser(req) {
   const authorization =
     clean(req.headers.authorization);
 
-  const token =
-    authorization
-      .replace(/^Bearer\s+/i, "")
-      .trim();
+  const token = authorization
+    .replace(/^Bearer\s+/i, "")
+    .trim();
 
   if (!token) {
     throw new Error(
@@ -298,21 +358,16 @@ async function verifySupabaseUser(req) {
     {
       headers: {
         apikey: ANON_KEY,
-        Authorization:
-          `Bearer ${token}`
+        Authorization: `Bearer ${token}`
       }
     }
   );
 
-  const user =
-    await response
-      .json()
-      .catch(() => null);
+  const user = await response
+    .json()
+    .catch(() => null);
 
-  if (
-    !response.ok ||
-    !user?.id
-  ) {
+  if (!response.ok || !user?.id) {
     throw new Error(
       "The login session is invalid or expired."
     );
@@ -326,15 +381,14 @@ async function findProperty({
   address
 }) {
   if (clean(propertyId)) {
-    const rows =
-      await supabaseRequest(
-        `properties?id=eq.${encodeURIComponent(
-          clean(propertyId)
-        )}&select=*&limit=1`,
-        {
-          method: "GET"
-        }
-      );
+    const rows = await supabaseRequest(
+      `properties?id=eq.${encodeURIComponent(
+        clean(propertyId)
+      )}&select=*&limit=1`,
+      {
+        method: "GET"
+      }
+    );
 
     return Array.isArray(rows)
       ? rows[0] || null
@@ -348,51 +402,158 @@ async function findProperty({
     return null;
   }
 
-  const rows =
-    await supabaseRequest(
-      `properties?normalized_address=eq.${encodeURIComponent(
-        normalizedAddress
-      )}&select=*&limit=1`,
-      {
-        method: "GET"
-      }
-    );
+  const exactRows = await supabaseRequest(
+    `properties?normalized_address=eq.${encodeURIComponent(
+      normalizedAddress
+    )}&select=*&limit=25`,
+    {
+      method: "GET"
+    }
+  );
 
-  return Array.isArray(rows)
-    ? rows[0] || null
-    : null;
+  if (
+    Array.isArray(exactRows) &&
+    exactRows.length
+  ) {
+    exactRows.sort((first, second) => {
+      const firstCalculated =
+        first.rating_updated_at &&
+        first.current_rating !== null &&
+        first.current_rating !== undefined
+          ? 1
+          : 0;
+
+      const secondCalculated =
+        second.rating_updated_at &&
+        second.current_rating !== null &&
+        second.current_rating !== undefined
+          ? 1
+          : 0;
+
+      if (
+        firstCalculated !== secondCalculated
+      ) {
+        return (
+          secondCalculated -
+          firstCalculated
+        );
+      }
+
+      return (
+        (
+          Date.parse(
+            second.rating_updated_at ||
+            second.updated_at ||
+            second.created_at ||
+            ""
+          ) || 0
+        ) -
+        (
+          Date.parse(
+            first.rating_updated_at ||
+            first.updated_at ||
+            first.created_at ||
+            ""
+          ) || 0
+        )
+      );
+    });
+
+    return exactRows[0];
+  }
+
+  const allRows = await supabaseRequest(
+    "properties?select=*&order=created_at.desc&limit=1000",
+    {
+      method: "GET"
+    }
+  );
+
+  const matches = (
+    Array.isArray(allRows)
+      ? allRows
+      : []
+  ).filter(property =>
+    addressesMatch(
+      address,
+      property.full_address ||
+      property.address ||
+      property.street ||
+      ""
+    )
+  );
+
+  matches.sort((first, second) => {
+    const firstCalculated =
+      first.rating_updated_at &&
+      first.current_rating !== null &&
+      first.current_rating !== undefined
+        ? 1
+        : 0;
+
+    const secondCalculated =
+      second.rating_updated_at &&
+      second.current_rating !== null &&
+      second.current_rating !== undefined
+        ? 1
+        : 0;
+
+    if (
+      firstCalculated !== secondCalculated
+    ) {
+      return (
+        secondCalculated -
+        firstCalculated
+      );
+    }
+
+    return (
+      (
+        Date.parse(
+          second.rating_updated_at ||
+          second.updated_at ||
+          second.created_at ||
+          ""
+        ) || 0
+      ) -
+      (
+        Date.parse(
+          first.rating_updated_at ||
+          first.updated_at ||
+          first.created_at ||
+          ""
+        ) || 0
+      )
+    );
+  });
+
+  return matches[0] || null;
 }
 
 async function loadPropertyEntries(
   propertyId
 ) {
-  const rows =
-    await optionalSupabaseRequest(
-      `property_report_entries?property_id=eq.${encodeURIComponent(
-        propertyId
-      )}&select=*`,
-      {
-        method: "GET"
-      }
-    );
-
-  return rows;
+  return optionalSupabaseRequest(
+    `property_report_entries?property_id=eq.${encodeURIComponent(
+      propertyId
+    )}&select=*`,
+    {
+      method: "GET"
+    }
+  );
 }
 
 async function loadPropertyDocuments(
   propertyId
 ) {
-  const rows =
-    await optionalSupabaseRequest(
-      `property_documents?property_id=eq.${encodeURIComponent(
-        propertyId
-      )}&select=*`,
-      {
-        method: "GET"
-      }
-    );
-
-  return rows;
+  return optionalSupabaseRequest(
+    `property_documents?property_id=eq.${encodeURIComponent(
+      propertyId
+    )}&select=*`,
+    {
+      method: "GET"
+    }
+  );
 }
 
 function normalizeContributorEntry(
@@ -491,18 +652,16 @@ function normalizeContributorEntry(
 async function loadContributorEntries(
   property
 ) {
-  const propertyId =
-    clean(property.id);
+  const propertyId = clean(property.id);
 
   const encodedId =
     encodeURIComponent(propertyId);
 
-  const propertyAddress =
-    clean(
-      property.full_address ||
-      property.address ||
-      property.street
-    );
+  const propertyAddress = clean(
+    property.full_address ||
+    property.address ||
+    property.street
+  );
 
   const [
     homeownerById,
@@ -556,9 +715,11 @@ async function loadContributorEntries(
     );
 
   const homeownerUpdates =
-    mergeUniqueRows(
-      homeownerById,
-      homeownerByAddress
+    dedupeHomeownerUpdates(
+      mergeUniqueRows(
+        homeownerById,
+        homeownerByAddress
+      )
     );
 
   const contractorWork =
@@ -573,16 +734,12 @@ async function loadContributorEntries(
         row,
         {
           propertyId,
-
           category:
             "Homeowner Reported Update",
-
           sourceType:
             "homeowner_update",
-
           sourceName:
             "Homeowner",
-
           verificationStatus:
             "homeowner_submitted"
         }
@@ -594,16 +751,12 @@ async function loadContributorEntries(
         row,
         {
           propertyId,
-
           category:
             "Contractor Work Record",
-
           sourceType:
             "contractor_record",
-
           sourceName:
             "Contractor",
-
           verificationStatus:
             "contractor_submitted"
         }
@@ -670,10 +823,7 @@ function documentText(document) {
   );
 }
 
-function containsAny(
-  text,
-  terms
-) {
+function containsAny(text, terms) {
   return terms.some(term =>
     text.includes(term)
   );
@@ -748,26 +898,17 @@ function countUniqueSystems(entries) {
     ]
   };
 
-  const found =
-    new Set();
+  const found = new Set();
 
   entries.forEach(entry => {
-    const text =
-      entryText(entry);
+    const text = entryText(entry);
 
     Object.entries(systems)
-      .forEach(
-        ([system, terms]) => {
-          if (
-            containsAny(
-              text,
-              terms
-            )
-          ) {
-            found.add(system);
-          }
+      .forEach(([system, terms]) => {
+        if (containsAny(text, terms)) {
+          found.add(system);
         }
-      );
+      });
   });
 
   return found.size;
@@ -776,35 +917,25 @@ function countUniqueSystems(entries) {
 function calculatePermitPoints(entries) {
   const permitEntries =
     entries.filter(entry => {
-      const status =
-        normalize(
-          entry.verification_status
-        );
+      const status = normalize(
+        entry.verification_status
+      );
 
-      const type =
-        normalize(
-          entry.document_type
-        );
+      const type = normalize(
+        entry.document_type
+      );
 
-      const text =
-        entryText(entry);
+      const text = entryText(entry);
 
       return (
-        status ===
-          "permit_documented" ||
+        status === "permit_documented" ||
         type === "permit" ||
-        text.includes(
-          "permit documented"
-        ) ||
-        text.includes(
-          "permit found"
-        )
+        text.includes("permit documented") ||
+        text.includes("permit found")
       );
     });
 
-  const count =
-    permitEntries.length;
-
+  const count = permitEntries.length;
   let points = 0;
 
   if (count >= 3) {
@@ -827,7 +958,6 @@ function calculateHistoryScore(
   entries
 ) {
   const breakdown = {};
-
   let propertyRecordPoints = 0;
 
   if (
@@ -859,38 +989,26 @@ function calculateHistoryScore(
   }
 
   breakdown.propertyRecord = {
-    label:
-      "Core property record",
-
-    score:
-      propertyRecordPoints,
-
-    maximum:
-      4
+    label: "Core property record",
+    score: propertyRecordPoints,
+    maximum: 4
   };
 
   const permitResult =
     calculatePermitPoints(entries);
 
   breakdown.permitInformation = {
-    label:
-      "Permit information",
-
-    score:
-      permitResult.points,
-
-    maximum:
-      9,
-
-    count:
-      permitResult.count
+    label: "Permit information",
+    score: permitResult.points,
+    maximum: 9,
+    count: permitResult.count
   };
 
   const listingEntries =
-    entries.filter(entry =>
-      normalize(
-        entry.source_type
-      ) === "listing_remark"
+    entries.filter(
+      entry =>
+        normalize(entry.source_type) ===
+        "listing_remark"
     );
 
   breakdown.publicListingRemarks = {
@@ -902,11 +1020,8 @@ function calculateHistoryScore(
         ? 5
         : 0,
 
-    maximum:
-      5,
-
-    count:
-      listingEntries.length
+    maximum: 5,
+    count: listingEntries.length
   };
 
   const datedEntries =
@@ -926,31 +1041,23 @@ function calculateHistoryScore(
         ? 8
         : 0,
 
-    maximum:
-      8,
-
-    count:
-      datedEntries.length
+    maximum: 8,
+    count: datedEntries.length
   };
 
   const systemsFound =
     countUniqueSystems(entries);
 
   breakdown.majorSystems = {
-    label:
-      "Major systems mentioned",
+    label: "Major systems mentioned",
 
-    score:
-      Math.min(
-        10,
-        systemsFound * 2
-      ),
-
-    maximum:
+    score: Math.min(
       10,
+      systemsFound * 2
+    ),
 
-    count:
-      systemsFound
+    maximum: 10,
+    count: systemsFound
   };
 
   const homeownerEntries =
@@ -1021,11 +1128,8 @@ function calculateHistoryScore(
     label:
       "Verified contributor records",
 
-    score:
-      contributorPoints,
-
-    maximum:
-      4,
+    score: contributorPoints,
+    maximum: 4,
 
     counts: {
       homeowner:
@@ -1042,20 +1146,16 @@ function calculateHistoryScore(
     }
   };
 
-  const score =
-    clamp(
-      Object.values(breakdown)
-        .reduce(
-          (total, item) =>
-            total +
-            Number(
-              item.score || 0
-            ),
-          0
-        ),
-      0,
-      40
-    );
+  const score = clamp(
+    Object.values(breakdown).reduce(
+      (total, item) =>
+        total +
+        Number(item.score || 0),
+      0
+    ),
+    0,
+    40
+  );
 
   return {
     score,
@@ -1089,15 +1189,9 @@ function calculateDocumentScore(
 
   const rules = [
     {
-      key:
-        "inspectionReport",
-
-      label:
-        "Inspection Report",
-
-      maximum:
-        12,
-
+      key: "inspectionReport",
+      label: "Inspection Report",
+      maximum: 12,
       terms: [
         "inspection report",
         "home inspection"
@@ -1105,15 +1199,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "sellerDisclosure",
-
-      label:
-        "Seller Property Disclosure",
-
-      maximum:
-        12,
-
+      key: "sellerDisclosure",
+      label: "Seller Property Disclosure",
+      maximum: 12,
       terms: [
         "seller disclosure",
         "spds",
@@ -1122,15 +1210,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "workRepairReceipts",
-
-      label:
-        "Work / Repair Receipts",
-
-      maximum:
-        10,
-
+      key: "workRepairReceipts",
+      label: "Work / Repair Receipts",
+      maximum: 10,
       terms: [
         "receipt",
         "invoice",
@@ -1140,15 +1222,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "hoaDocuments",
-
-      label:
-        "HOA Documents",
-
-      maximum:
-        6,
-
+      key: "hoaDocuments",
+      label: "HOA Documents",
+      maximum: 6,
       terms: [
         "hoa document",
         "homeowners association",
@@ -1158,15 +1234,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "surveySitePlan",
-
-      label:
-        "Survey / Site Plan",
-
-      maximum:
-        6,
-
+      key: "surveySitePlan",
+      label: "Survey / Site Plan",
+      maximum: 6,
       terms: [
         "survey",
         "site plan",
@@ -1175,15 +1245,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "hvacMaintenanceReceipt",
-
-      label:
-        "HVAC Maintenance Receipt",
-
-      maximum:
-        4,
-
+      key: "hvacMaintenanceReceipt",
+      label: "HVAC Maintenance Receipt",
+      maximum: 4,
       terms: [
         "hvac maintenance",
         "air conditioning service",
@@ -1192,15 +1256,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "newHvacSystemReceipt",
-
-      label:
-        "New HVAC System Receipt",
-
-      maximum:
-        5,
-
+      key: "newHvacSystemReceipt",
+      label: "New HVAC System Receipt",
+      maximum: 5,
       terms: [
         "hvac replacement",
         "new hvac",
@@ -1210,15 +1268,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "poolEquipmentWork",
-
-      label:
-        "Pool Equipment / Work",
-
-      maximum:
-        3,
-
+      key: "poolEquipmentWork",
+      label: "Pool Equipment / Work",
+      maximum: 3,
       terms: [
         "pool equipment",
         "pool pump",
@@ -1228,15 +1280,9 @@ function calculateDocumentScore(
     },
 
     {
-      key:
-        "solarInformation",
-
-      label:
-        "Solar Information",
-
-      maximum:
-        2,
-
+      key: "solarInformation",
+      label: "Solar Information",
+      maximum: 2,
       terms: [
         "solar",
         "photovoltaic",
@@ -1260,35 +1306,28 @@ function calculateDocumentScore(
       );
 
     breakdown[rule.key] = {
-      label:
-        rule.label,
+      label: rule.label,
 
       score:
         found
           ? rule.maximum
           : 0,
 
-      maximum:
-        rule.maximum,
-
+      maximum: rule.maximum,
       found
     };
   });
 
-  const score =
-    clamp(
-      Object.values(breakdown)
-        .reduce(
-          (total, item) =>
-            total +
-            Number(
-              item.score || 0
-            ),
-          0
-        ),
-      0,
-      60
-    );
+  const score = clamp(
+    Object.values(breakdown).reduce(
+      (total, item) =>
+        total +
+        Number(item.score || 0),
+      0
+    ),
+    0,
+    60
+  );
 
   return {
     score,
@@ -1298,30 +1337,25 @@ function calculateDocumentScore(
 }
 
 function getMapBaseline(property) {
-  const score =
-    clamp(
-      property.map_rating ??
-      property.current_rating ??
-      0,
-      0,
-      100
-    );
+  const score = clamp(
+    property.map_rating ??
+    property.current_rating ??
+    0,
+    0,
+    100
+  );
 
-  const historyScore =
-    clamp(
-      property.map_history_score ??
-      0,
-      0,
-      40
-    );
+  const historyScore = clamp(
+    property.map_history_score ?? 0,
+    0,
+    40
+  );
 
-  const documentScore =
-    clamp(
-      property.map_document_score ??
-      0,
-      0,
-      60
-    );
+  const documentScore = clamp(
+    property.map_document_score ?? 0,
+    0,
+    60
+  );
 
   const breakdown =
     property.map_rating_breakdown &&
@@ -1330,13 +1364,11 @@ function getMapBaseline(property) {
       ? property.map_rating_breakdown
       : {};
 
-  const permitCount =
-    clamp(
-      breakdown.permitCount ??
-      0,
-      0,
-      999
-    );
+  const permitCount = clamp(
+    breakdown.permitCount ?? 0,
+    0,
+    999
+  );
 
   let permitPoints = 0;
 
@@ -1362,8 +1394,7 @@ function calculateAdditionalHistory(
   historyResult,
   mapBaseline
 ) {
-  const history =
-    historyResult.breakdown;
+  const history = historyResult.breakdown;
 
   const additionalPermitPoints =
     Math.max(
@@ -1372,12 +1403,10 @@ function calculateAdditionalHistory(
       Number(
         history
           .permitInformation
-          .score ||
-        0
+          .score || 0
       ) -
       Number(
-        mapBaseline.permitPoints ||
-        0
+        mapBaseline.permitPoints || 0
       )
     );
 
@@ -1394,20 +1423,17 @@ function calculateAdditionalHistory(
           0,
           9 -
           Number(
-            mapBaseline.permitPoints ||
-            0
+            mapBaseline.permitPoints || 0
           )
         ),
 
       centralPermitCount:
         history
           .permitInformation
-          .count ||
-        0,
+          .count || 0,
 
       mapPermitCount:
-        mapBaseline.permitCount ||
-        0
+        mapBaseline.permitCount || 0
     },
 
     publicListingRemarks:
@@ -1423,20 +1449,16 @@ function calculateAdditionalHistory(
       history.contributorRecords
   };
 
-  const score =
-    clamp(
-      Object.values(breakdown)
-        .reduce(
-          (total, item) =>
-            total +
-            Number(
-              item.score || 0
-            ),
-          0
-        ),
-      0,
-      40
-    );
+  const score = clamp(
+    Object.values(breakdown).reduce(
+      (total, item) =>
+        total +
+        Number(item.score || 0),
+      0
+    ),
+    0,
+    40
+  );
 
   return {
     score,
@@ -1449,10 +1471,7 @@ function buildImprovementItems(
   documentResult
 ) {
   const items = [];
-
-  const history =
-    historyResult.breakdown;
-
+  const history = historyResult.breakdown;
   const documents =
     documentResult.breakdown;
 
@@ -1466,8 +1485,7 @@ function buildImprovementItems(
   }
 
   if (
-    history.publicListingRemarks.score ===
-    0
+    history.publicListingRemarks.score === 0
   ) {
     items.push(
       "Add public listing remarks or a listing information source."
@@ -1475,8 +1493,7 @@ function buildImprovementItems(
   }
 
   if (
-    history.datedInformation.score ===
-    0
+    history.datedInformation.score === 0
   ) {
     items.push(
       "Add dates for repairs, replacements, and improvements."
@@ -1523,8 +1540,7 @@ async function saveRating(
   propertyId,
   rating
 ) {
-  const now =
-    new Date().toISOString();
+  const now = new Date().toISOString();
 
   const payload = {
     current_rating:
@@ -1561,23 +1577,20 @@ async function saveRating(
       now
   };
 
-  const rows =
-    await supabaseRequest(
-      `properties?id=eq.${encodeURIComponent(
-        propertyId
-      )}`,
-      {
-        method: "PATCH",
+  const rows = await supabaseRequest(
+    `properties?id=eq.${encodeURIComponent(
+      propertyId
+    )}`,
+    {
+      method: "PATCH",
 
-        headers: {
-          Prefer:
-            "return=representation"
-        },
+      headers: {
+        Prefer: "return=representation"
+      },
 
-        body:
-          JSON.stringify(payload)
-      }
-    );
+      body: JSON.stringify(payload)
+    }
+  );
 
   return Array.isArray(rows)
     ? rows[0] || null
@@ -1610,19 +1623,14 @@ export default async function handler(
   if (req.method !== "POST") {
     return res.status(405).json({
       success: false,
-
       error:
         "Method not allowed. Use POST."
     });
   }
 
-  if (
-    !SUPABASE_URL ||
-    !SERVICE_KEY
-  ) {
+  if (!SUPABASE_URL || !SERVICE_KEY) {
     return res.status(500).json({
       success: false,
-
       error:
         "Supabase server environment variables are not configured."
     });
@@ -1637,21 +1645,19 @@ export default async function handler(
         ? JSON.parse(req.body)
         : req.body || {};
 
-    const property =
-      await findProperty({
-        propertyId:
-          body.propertyId ||
-          body.property_id,
+    const property = await findProperty({
+      propertyId:
+        body.propertyId ||
+        body.property_id,
 
-        address:
-          body.address ||
-          body.fullAddress
-      });
+      address:
+        body.address ||
+        body.fullAddress
+    });
 
     if (!property?.id) {
       return res.status(404).json({
         success: false,
-
         error:
           "The property record was not found."
       });
@@ -1701,35 +1707,31 @@ export default async function handler(
     const additionalDocumentScore =
       Math.max(
         0,
-
         documentResult.score -
         mapBaseline.documentScore
       );
 
-    const finalHistoryScore =
-      clamp(
-        mapBaseline.historyScore +
-        additionalHistory.score,
-        0,
-        40
-      );
+    const finalHistoryScore = clamp(
+      mapBaseline.historyScore +
+      additionalHistory.score,
+      0,
+      40
+    );
 
-    const finalDocumentScore =
-      clamp(
-        mapBaseline.documentScore +
-        additionalDocumentScore,
-        0,
-        60
-      );
+    const finalDocumentScore = clamp(
+      mapBaseline.documentScore +
+      additionalDocumentScore,
+      0,
+      60
+    );
 
-    const finalScore =
-      clamp(
-        mapBaseline.score +
-        additionalHistory.score +
-        additionalDocumentScore,
-        0,
-        100
-      );
+    const finalScore = clamp(
+      mapBaseline.score +
+      additionalHistory.score +
+      additionalDocumentScore,
+      0,
+      100
+    );
 
     const improvementItems =
       buildImprovementItems(
@@ -1737,39 +1739,27 @@ export default async function handler(
         documentResult
       );
 
-    const sourceCounts =
-      entries.reduce(
-        (counts, entry) => {
-          const source =
-            normalize(
-              entry.source_type ||
-              "unknown"
-            ).replace(
-              /[^a-z0-9]+/g,
-              "_"
-            );
+    const sourceCounts = entries.reduce(
+      (counts, entry) => {
+        const source = normalize(
+          entry.source_type || "unknown"
+        ).replace(
+          /[^a-z0-9]+/g,
+          "_"
+        );
 
-          counts[source] =
-            (
-              counts[source] ||
-              0
-            ) + 1;
+        counts[source] =
+          (counts[source] || 0) + 1;
 
-          return counts;
-        },
-        {}
-      );
+        return counts;
+      },
+      {}
+    );
 
     const rating = {
-      score:
-        finalScore,
-
-      band:
-        ratingBand(finalScore),
-
-      historyScore:
-        finalHistoryScore,
-
+      score: finalScore,
+      band: ratingBand(finalScore),
+      historyScore: finalHistoryScore,
       documentScore:
         finalDocumentScore,
 
@@ -1820,9 +1810,7 @@ export default async function handler(
           reportEntries.length,
 
         contributorEntries:
-          contributorResult
-            .entries
-            .length,
+          contributorResult.entries.length,
 
         homeownerUpdates:
           contributorResult
