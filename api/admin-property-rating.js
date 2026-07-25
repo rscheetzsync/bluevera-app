@@ -103,6 +103,41 @@ function propertyAddress(property) {
   );
 }
 
+function addressLookupPattern(value) {
+  const parts = addressParts(value);
+
+  if (!parts.number) {
+    return "";
+  }
+
+  const streetWords = parts.words
+    .filter(word => word.length >= 3)
+    .slice(0, 2);
+
+  if (!streetWords.length) {
+    return "";
+  }
+
+  return `*${[
+    parts.number,
+    ...streetWords
+  ].join("*")}*`;
+}
+
+function sellerDocumentAddressPath(address) {
+  const pattern = addressLookupPattern(address);
+
+  if (!pattern) {
+    return "";
+  }
+
+  return (
+    "seller_documents?" +
+    `property_address=ilike.${encodeURIComponent(pattern)}` +
+    "&select=*&limit=100"
+  );
+}
+
 function propertyQuality(property) {
   const hasCalculatedRating =
     property?.rating_updated_at &&
@@ -423,6 +458,7 @@ function normalizeEvidenceRow(row, defaults = {}) {
         "service_year",
         "work_year",
         "installed_year",
+        "        "installed_year",
         "replacement_year"
       ],
       null
@@ -703,7 +739,8 @@ async function loadProperty(propertyId) {
     allContractorWork,
     contractorDocuments,
     propertyDocuments,
-    sellerDocuments,
+    sellerDocumentsById,
+    sellerDocumentCandidates,
     propertyHistoryItems
   ] = await Promise.all([
     optionalRest(
@@ -751,6 +788,15 @@ async function loadProperty(propertyId) {
       { method: "GET" }
     ),
 
+    sellerDocumentAddressPath(propertyAddressValue)
+      ? optionalRest(
+          sellerDocumentAddressPath(
+            propertyAddressValue
+          ),
+          { method: "GET" }
+        )
+      : Promise.resolve([]),
+
     optionalRest(
       `property_history_items?property_id=eq.${id}&select=*`,
       { method: "GET" }
@@ -784,6 +830,21 @@ async function loadProperty(propertyId) {
   const contractorWork = mergeUniqueRows(
     contractorById,
     contractorByAddress
+  );
+
+  const sellerDocumentsByAddress =
+    sellerDocumentCandidates.filter(row =>
+      addressesMatch(
+        propertyAddressValue,
+        row.property_address ||
+        row.address_text ||
+        row.address
+      )
+    );
+
+  const sellerDocuments = mergeUniqueRows(
+    sellerDocumentsById,
+    sellerDocumentsByAddress
   );
 
   const entries = [
@@ -974,6 +1035,12 @@ async function loadProperty(propertyId) {
 
       sellerDocuments:
         sellerDocuments.length,
+
+      sellerDocumentsByPropertyId:
+        sellerDocumentsById.length,
+
+      sellerDocumentsByAddress:
+        sellerDocumentsByAddress.length,
 
       propertyHistoryItems:
         propertyHistoryItems.length
