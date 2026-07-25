@@ -458,7 +458,6 @@ function normalizeEvidenceRow(row, defaults = {}) {
         "service_year",
         "work_year",
         "installed_year",
-        "        "installed_year",
         "replacement_year"
       ],
       null
