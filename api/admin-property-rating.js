@@ -713,7 +713,7 @@ async function loadProperty(propertyId) {
     }
   );
 
-  const property = Array.isArray(properties)
+  let property = Array.isArray(properties)
     ? properties[0]
     : null;
 
@@ -721,6 +721,49 @@ async function loadProperty(propertyId) {
     throw new Error(
       "The central property record was not found."
     );
+  }
+
+  const ratingRows = await optionalRest(
+    `property_current_ratings?property_id=eq.${id}&select=*&limit=1`,
+    { method: "GET" }
+  );
+
+  const authoritativeRating =
+    ratingRows[0] || null;
+
+  if (authoritativeRating) {
+    property = {
+      ...property,
+      current_rating:
+        authoritativeRating
+          .disclosure_rating,
+      rating_band:
+        authoritativeRating
+          .rating_level,
+      history_score:
+        authoritativeRating
+          .history_score,
+      document_score:
+        authoritativeRating
+          .document_score,
+      rating_breakdown:
+        authoritativeRating
+          .rating_breakdown,
+      rating_improvement_items:
+        authoritativeRating
+          .rating_improvement_items,
+      rating_input_counts:
+        authoritativeRating
+          .rating_input_counts,
+      rating_version:
+        authoritativeRating
+          .formula_version,
+      rating_updated_at:
+        authoritativeRating
+          .calculated_at,
+      rating_source:
+        "property_ratings"
+    };
   }
 
   const propertyAddressValue = clean(
@@ -1182,11 +1225,6 @@ export default async function handler(req, res) {
           });
         }
 
-        await callCentralRecalculation(
-          req,
-          propertyId
-        );
-
         const result =
           await loadProperty(propertyId);
 
@@ -1245,9 +1283,19 @@ export default async function handler(req, res) {
             adminContext
           );
 
+        const rating =
+          await callCentralRecalculation(
+            req,
+            propertyId
+          );
+
         return res.status(200).json({
           success: true,
-          adjustment
+          adjustment,
+          rating:
+            rating.rating,
+          band:
+            rating.band
         });
       }
 
