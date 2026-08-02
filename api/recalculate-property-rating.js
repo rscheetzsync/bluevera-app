@@ -1095,7 +1095,16 @@ function documentText(document) {
     ]
       .filter(Boolean)
       .join(" ")
-  );
+  )
+    .replace(
+      /[^a-z0-9]+/g,
+      " "
+    )
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
 }
 
 function containsAny(
