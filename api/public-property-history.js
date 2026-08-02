@@ -1,3 +1,8 @@
+import {
+  searchProperties,
+  loadPropertyEvidence
+} from "../lib/property-evidence.js";
+
 const SUPABASE_URL = String(
   process.env.SUPABASE_URL || ""
 ).replace(/\/+$/, "");
@@ -21,671 +26,7 @@ function cleanUuid(value) {
     : "";
 }
 
-function normalizeAddress(value) {
-  return clean(value)
-    .toLowerCase()
-    .replace(/[.,#]/g, " ")
-    .replace(/\bwest\b/g, "w")
-    .replace(/\beast\b/g, "e")
-    .replace(/\bnorth\b/g, "n")
-    .replace(/\bsouth\b/g, "s")
-    .replace(/\bnortheast\b/g, "ne")
-    .replace(/\bnorthwest\b/g, "nw")
-    .replace(/\bsoutheast\b/g, "se")
-    .replace(/\bsouthwest\b/g, "sw")
-    .replace(/\bstreet\b/g, "st")
-    .replace(/\bavenue\b/g, "ave")
-    .replace(/\broad\b/g, "rd")
-    .replace(/\bdrive\b/g, "dr")
-    .replace(/\blane\b/g, "ln")
-    .replace(/\bboulevard\b/g, "blvd")
-    .replace(/\bcourt\b/g, "ct")
-    .replace(/\bplace\b/g, "pl")
-    .replace(/\bcircle\b/g, "cir")
-    .replace(/\bterrace\b/g, "ter")
-    .replace(/\bparkway\b/g, "pkwy")
-    .replace(
-      /\b(arizona|az|phoenix|glendale|scottsdale|tempe|mesa|chandler|gilbert|paradise valley)\b/g,
-      " "
-    )
-    .replace(/\b\d{5}(?:-\d{4})?\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function addressParts(value) {
-  const normalized =
-    normalizeAddress(value);
-
-  const parts =
-    normalized
-      .split(" ")
-      .filter(Boolean);
-
-  return {
-    normalized,
-
-    number:
-      parts.find(part =>
-        /^\d+[a-z]?$/.test(part)
-      ) || "",
-
-    words:
-      parts.filter(part =>
-        !/^\d+[a-z]?$/.test(part)
-      )
-  };
-}
-
-function addressesMatch(
-  firstValue,
-  secondValue
-) {
-  const first =
-    addressParts(firstValue);
-
-  const second =
-    addressParts(secondValue);
-
-  if (
-    !first.normalized ||
-    !second.normalized
-  ) {
-    return false;
-  }
-
-  if (
-    first.number &&
-    second.number &&
-    first.number !== second.number
-  ) {
-    return false;
-  }
-
-  if (
-    first.normalized ===
-      second.normalized ||
-    first.normalized.includes(
-      second.normalized
-    ) ||
-    second.normalized.includes(
-      first.normalized
-    )
-  ) {
-    return true;
-  }
-
-  const shared =
-    first.words.filter(
-      word =>
-        word.length >= 3 &&
-        second.words.includes(word)
-    );
-
-  return shared.length >= 1;
-}
-
-async function readJson(response) {
-  const text =
-    await response.text();
-
-  if (!text) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-async function rest(path) {
-  const response =
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/${path}`,
-      {
-        method: "GET",
-
-        headers: {
-          apikey:
-            SERVICE_KEY,
-
-          Authorization:
-            `Bearer ${SERVICE_KEY}`,
-
-          Accept:
-            "application/json"
-        }
-      }
-    );
-
-  const data =
-    await readJson(response);
-
-  if (!response.ok) {
-    const error =
-      new Error(
-        data?.message ||
-        data?.details ||
-        data?.hint ||
-        data?.error ||
-        `Supabase request failed (${response.status})`
-      );
-
-    error.status =
-      response.status;
-
-    throw error;
-  }
-
-  return Array.isArray(data)
-    ? data
-    : [];
-}
-
-async function optionalRest(path) {
-  try {
-    return await rest(path);
-  } catch (error) {
-    console.warn(
-      "Optional public property history source unavailable:",
-      path,
-      error?.message
-    );
-
-    return [];
-  }
-}
-
-function mergeUniqueRows(...groups) {
-  const rows = new Map();
-
-  groups.flat().forEach(row => {
-    if (!row) return;
-
-    const key =
-      clean(row.id) ||
-      [
-        clean(row.property_id),
-        clean(row.property_address),
-        clean(row.created_at),
-        clean(row.update_type),
-        clean(row.note),
-        clean(row.description)
-      ].join("|");
-
-    if (!rows.has(key)) {
-      rows.set(key, row);
-    }
-  });
-
-  return Array.from(rows.values());
-}
-
-function propertyAddress(property) {
-  return clean(
-    property?.full_address ||
-    property?.address ||
-    property?.street
-  );
-}
-
-function propertyQuality(property) {
-  return {
-    calculated:
-      property?.rating_updated_at &&
-      property?.current_rating !== null &&
-      property?.current_rating !== undefined
-        ? 1
-        : 0,
-
-    updated:
-      Date.parse(
-        property?.rating_updated_at ||
-        property?.updated_at ||
-        property?.created_at ||
-        ""
-      ) || 0
-  };
-}
-
-function preferProperty(
-  first,
-  second
-) {
-  const firstQuality =
-    propertyQuality(first);
-
-  const secondQuality =
-    propertyQuality(second);
-
-  if (
-    firstQuality.calculated !==
-    secondQuality.calculated
-  ) {
-    return secondQuality.calculated >
-      firstQuality.calculated
-      ? second
-      : first;
-  }
-
-  return secondQuality.updated >
-    firstQuality.updated
-    ? second
-    : first;
-}
-
-async function resolveProperty({
-  propertyId,
-  address
-}) {
-  if (propertyId) {
-    const rows =
-      await rest(
-        `properties?id=eq.${encodeURIComponent(
-          propertyId
-        )}&select=*&limit=1`
-      );
-
-    return rows[0] || null;
-  }
-
-  const requestedAddress =
-    clean(address);
-
-  if (!requestedAddress) {
-    return null;
-  }
-
-  const number =
-    addressParts(
-      requestedAddress
-    ).number;
-
-  const wildcard =
-    number
-      ? `*${number}*`
-      : `*${requestedAddress}*`;
-
-  const candidates =
-    await rest(
-      `properties?or=(` +
-      `full_address.ilike.${encodeURIComponent(
-        wildcard
-      )},` +
-      `address.ilike.${encodeURIComponent(
-        wildcard
-      )},` +
-      `street.ilike.${encodeURIComponent(
-        wildcard
-      )}` +
-      `)&select=*&limit=500`
-    );
-
-  const matches =
-    candidates.filter(
-      property =>
-        addressesMatch(
-          requestedAddress,
-          propertyAddress(property)
-        )
-    );
-
-  if (!matches.length) {
-    return null;
-  }
-
-  const canonical =
-    matches.reduce(
-      (best, candidate) =>
-        best
-          ? preferProperty(
-              best,
-              candidate
-            )
-          : candidate,
-
-      null
-    );
-
-  return canonical
-    ? {
-        ...canonical,
-
-        matching_property_ids:
-          matches
-            .map(item => item.id)
-            .filter(Boolean)
-      }
-    : null;
-}
-
-function activeRow(row) {
-  const status =
-    clean(
-      row?.status
-    ).toLowerCase();
-
-  return ![
-    "deleted",
-    "archived",
-    "rejected",
-    "removed",
-    "inactive"
-  ].includes(status);
-}
-
-function safeText(
-  value,
-  maxLength = 1200
-) {
-  return clean(value)
-    .replace(/\s+/g, " ")
-    .slice(0, maxLength);
-}
-
-function homeownerPublicRow(row) {
-  return {
-    id:
-      clean(row.id),
-
-    propertyId:
-      clean(
-        row.property_id
-      ),
-
-    updateType:
-      safeText(
-        row.update_type ||
-        row.item_label ||
-        row.category ||
-        "Homeowner update",
-        180
-      ),
-
-    recordStatus:
-      safeText(
-        row.record_status ||
-        row.verified_status ||
-        row.status ||
-        "owner-reported",
-        80
-      ),
-
-    approximateDate:
-      safeText(
-        row.approximate_date ||
-        row.event_date ||
-        row.created_at,
-        80
-      ),
-
-    contractor:
-      safeText(
-        row.contractor ||
-        row.contractor_name,
-        180
-      ),
-
-    note:
-      safeText(
-        row.note ||
-        row.description ||
-        row.update_description,
-        1200
-      ),
-
-    createdAt:
-      row.created_at || null,
-
-    sourceType:
-      "homeowner_update",
-
-    sourceLabel:
-      "Homeowner Update"
-  };
-}
-
-function contractorPublicRow(row) {
-  const contractor =
-    row.contractors || {};
-
-  return {
-    id:
-      clean(row.id),
-
-    propertyId:
-      clean(
-        row.property_id
-      ),
-
-    workType:
-      safeText(
-        row.work_type ||
-        row.service_type ||
-        row.category ||
-        "Contractor completed work",
-        180
-      ),
-
-    status:
-      safeText(
-        row.status ||
-        "contractor-submitted",
-        80
-      ),
-
-    completedDate:
-      safeText(
-        row.completed_date ||
-        row.completed_at ||
-        row.work_date ||
-        row.created_at,
-        80
-      ),
-
-    contractorName:
-      safeText(
-        contractor.business_name ||
-        row.contractor_name ||
-        row.business_name ||
-        "Contractor",
-        180
-      ),
-
-    description:
-      safeText(
-        row.description ||
-        row.work_description ||
-        row.notes,
-        1200
-      ),
-
-    permitNumber:
-      safeText(
-        row.permit_number,
-        100
-      ),
-
-    createdAt:
-      row.created_at || null,
-
-    sourceType:
-      "contractor_record",
-
-    sourceLabel:
-      "Contractor Record"
-  };
-}
-
-function listingPublicRow(row) {
-  return {
-    id:
-      clean(row.id),
-
-    propertyId:
-      clean(
-        row.property_id
-      ),
-
-    category:
-      safeText(
-        row.category ||
-        "Listing Information",
-        180
-      ),
-
-    itemLabel:
-      safeText(
-        row.item_label ||
-        row.label ||
-        row.title ||
-        "Listing update",
-        180
-      ),
-
-    year:
-      row.year || null,
-
-    month:
-      row.month || null,
-
-    description:
-      safeText(
-        row.description ||
-        row.statement ||
-        row.note,
-        1200
-      ),
-
-    verifiedStatus:
-      safeText(
-        row.verified_status ||
-        "listing_claimed_verify",
-        80
-      ),
-
-    confidenceLevel:
-      safeText(
-        row.confidence_level ||
-        "medium",
-        80
-      ),
-
-    createdAt:
-      row.created_at || null,
-
-    sourceType:
-      clean(
-        row.source_type ||
-        "public_listing_history"
-      ),
-
-    sourceLabel:
-      "Listing Information"
-  };
-}
-
-function maintenancePublicRow(row) {
-  return {
-    id:
-      clean(row.id),
-
-    propertyId:
-      clean(
-        row.property_id
-      ),
-
-    category:
-      safeText(
-        row.category ||
-        row.item_label ||
-        "Maintenance record",
-        180
-      ),
-
-    itemLabel:
-      safeText(
-        row.item_label ||
-        row.category ||
-        "Maintenance record",
-        180
-      ),
-
-    year:
-      row.year || null,
-
-    month:
-      row.month || null,
-
-    description:
-      safeText(
-        row.description ||
-        row.note,
-        1200
-      ),
-
-    verifiedStatus:
-      safeText(
-        row.verified_status ||
-        row.status ||
-        "recorded",
-        80
-      ),
-
-    createdAt:
-      row.created_at || null,
-
-    sourceType:
-      clean(
-        row.source_type ||
-        "maintenance"
-      ),
-
-    sourceLabel:
-      "Maintenance Record"
-  };
-}
-
-function dedupe(rows) {
-  const found =
-    new Map();
-
-  rows.forEach(row => {
-    const key =
-      clean(row.id) ||
-      JSON.stringify([
-        row.updateType ||
-        row.workType ||
-        row.itemLabel ||
-        row.category,
-
-        row.approximateDate ||
-        row.completedDate ||
-        row.year,
-
-        row.note ||
-        row.description
-      ]);
-
-    if (!found.has(key)) {
-      found.set(
-        key,
-        row
-      );
-    }
-  });
-
-  return Array.from(
-    found.values()
-  );
-}
-
-function applyCors(
-  req,
-  res
-) {
+function applyCors(res) {
   res.setHeader(
     "Access-Control-Allow-Origin",
     "*"
@@ -702,18 +43,399 @@ function applyCors(
   );
 }
 
+function activeEntry(entry) {
+  const status = clean(
+    entry?.verification_status
+  ).toLowerCase();
+
+  return ![
+    "deleted",
+    "archived",
+    "rejected",
+    "removed",
+    "inactive"
+  ].includes(status);
+}
+
+function sourceType(entry) {
+  return clean(
+    entry?.source_type
+  ).toLowerCase();
+}
+
+function originalTable(entry) {
+  return clean(
+    entry?.original_table
+  ).toLowerCase();
+}
+
+function safeText(
+  value,
+  maxLength = 1200
+) {
+  return clean(value)
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength);
+}
+
+function readableStatus(value) {
+  const status = clean(value)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+
+  if (
+    status.includes("verified")
+  ) {
+    return "Verified";
+  }
+
+  if (
+    status.includes("document")
+  ) {
+    return "Documented";
+  }
+
+  if (
+    status.includes("owner reported") ||
+    status.includes("homeowner submitted")
+  ) {
+    return "Homeowner Reported";
+  }
+
+  if (
+    status.includes("contractor submitted")
+  ) {
+    return "Contractor Submitted";
+  }
+
+  if (
+    status.includes("listing")
+  ) {
+    return "Listing Information";
+  }
+
+  if (
+    status.includes("uploaded")
+  ) {
+    return "Document Uploaded";
+  }
+
+  if (
+    status.includes("recorded")
+  ) {
+    return "Recorded";
+  }
+
+  return status
+    ? status.replace(
+        /\b\w/g,
+        letter =>
+          letter.toUpperCase()
+      )
+    : "Recorded";
+}
+
+function displayDate(entry) {
+  if (entry?.event_year) {
+    return String(
+      entry.event_year
+    );
+  }
+
+  const value =
+    entry?.event_date ||
+    entry?.created_at ||
+    entry?.updated_at;
+
+  if (!value) {
+    return "";
+  }
+
+  const parsed =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      parsed.getTime()
+    )
+  ) {
+    return safeText(
+      value,
+      80
+    );
+  }
+
+  return parsed.toLocaleDateString(
+    "en-US",
+    {
+      year: "numeric",
+      month: "short"
+    }
+  );
+}
+
+function publicTimelineEntry(entry) {
+  const type =
+    sourceType(entry);
+
+  let sourceLabel =
+    "BlueVera Property Record";
+
+  if (
+    type ===
+    "homeowner_update"
+  ) {
+    sourceLabel =
+      "Homeowner Update";
+  } else if (
+    type ===
+      "contractor_record" ||
+    type ===
+      "contractor_document"
+  ) {
+    sourceLabel =
+      "Contractor Record";
+  } else if (
+    [
+      "public_listing_history",
+      "listing_update",
+      "listing",
+      "listing_claim",
+      "mls_listing"
+    ].includes(type)
+  ) {
+    sourceLabel =
+      "Listing Information";
+  } else if (
+    type ===
+      "seller_document"
+  ) {
+    sourceLabel =
+      "Seller Document";
+  } else if (
+    type ===
+      "property_document"
+  ) {
+    sourceLabel =
+      "Property Document";
+  }
+
+  return {
+    id:
+      entry.id,
+
+    title:
+      safeText(
+        entry.system_name ||
+        entry.category ||
+        "Property update",
+        180
+      ),
+
+    category:
+      safeText(
+        entry.category ||
+        "Property Record",
+        180
+      ),
+
+    system:
+      safeText(
+        entry.system_name,
+        180
+      ),
+
+    date:
+      displayDate(entry),
+
+    year:
+      entry.event_year ||
+      null,
+
+    summary:
+      safeText(
+        entry.statement ||
+        "Property record available.",
+        1200
+      ),
+
+    sourceType:
+      type,
+
+    sourceLabel,
+
+    sourceName:
+      safeText(
+        entry.source_name,
+        180
+      ),
+
+    verificationStatus:
+      clean(
+        entry.verification_status
+      ),
+
+    verificationLabel:
+      readableStatus(
+        entry.verification_status
+      ),
+
+    documentType:
+      safeText(
+        entry.document_type,
+        120
+      ),
+
+    createdAt:
+      entry.created_at ||
+      null,
+
+    updatedAt:
+      entry.updated_at ||
+      null
+  };
+}
+
+function isHomeownerEntry(entry) {
+  return (
+    sourceType(entry) ===
+      "homeowner_update" ||
+    originalTable(entry) ===
+      "homeowner_updates"
+  );
+}
+
+function isContractorEntry(entry) {
+  const type =
+    sourceType(entry);
+
+  const table =
+    originalTable(entry);
+
+  return (
+    type ===
+      "contractor_record" ||
+    type ===
+      "contractor_document" ||
+    table ===
+      "contractor_work_submissions" ||
+    table ===
+      "contractor_documents"
+  );
+}
+
+function isListingEntry(entry) {
+  const type =
+    sourceType(entry);
+
+  return [
+    "public_listing_history",
+    "listing_update",
+    "listing",
+    "listing_claim",
+    "mls_listing"
+  ].includes(type);
+}
+
+function isMaintenanceEntry(entry) {
+  const type =
+    sourceType(entry);
+
+  return [
+    "maintenance",
+    "maintenance_record",
+    "home_maintenance",
+    "service_record"
+  ].includes(type);
+}
+
+function uniqueEntries(entries) {
+  const rows =
+    new Map();
+
+  entries.forEach(entry => {
+    const key =
+      clean(entry.id) ||
+      [
+        clean(entry.title),
+        clean(entry.date),
+        clean(entry.summary),
+        clean(entry.sourceLabel)
+      ].join("|");
+
+    if (!rows.has(key)) {
+      rows.set(
+        key,
+        entry
+      );
+    }
+  });
+
+  return Array.from(
+    rows.values()
+  );
+}
+
+async function resolvePropertyId(
+  req
+) {
+  const requestedId =
+    cleanUuid(
+      req.query.propertyId ||
+      req.query.property_id
+    );
+
+  if (requestedId) {
+    return requestedId;
+  }
+
+  const address =
+    clean(
+      req.query.address
+    );
+
+  if (!address) {
+    return "";
+  }
+
+  const results =
+    await searchProperties(
+      address,
+      {
+        supabaseUrl:
+          SUPABASE_URL,
+
+        serviceKey:
+          SERVICE_KEY
+      }
+    );
+
+  if (
+    !Array.isArray(results) ||
+    !results.length
+  ) {
+    return "";
+  }
+
+  return clean(
+    results[0]?.id
+  );
+}
+
 export default async function handler(
   req,
   res
 ) {
-  applyCors(
-    req,
-    res
+  applyCors(res);
+
+  res.setHeader(
+    "Content-Type",
+    "application/json"
   );
 
   res.setHeader(
     "Cache-Control",
-    "public, max-age=0, s-maxage=60, stale-while-revalidate=300"
+    "no-store, max-age=0"
   );
 
   res.setHeader(
@@ -758,43 +480,15 @@ export default async function handler(
         success: false,
 
         error:
-          "Supabase server configuration is missing."
+          "Supabase server environment variables are not configured."
       });
   }
 
   try {
     const propertyId =
-      cleanUuid(
-        req.query.propertyId ||
-        req.query.property_id
-      );
+      await resolvePropertyId(req);
 
-    const address =
-      clean(
-        req.query.address
-      );
-
-    if (
-      !propertyId &&
-      !address
-    ) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-
-          error:
-            "A propertyId or address is required."
-        });
-    }
-
-    const property =
-      await resolveProperty({
-        propertyId,
-        address
-      });
-
-    if (!property?.id) {
+    if (!propertyId) {
       return res
         .status(404)
         .json({
@@ -805,235 +499,107 @@ export default async function handler(
         });
     }
 
-    const id =
-      encodeURIComponent(
-        property.id
+    const result =
+      await loadPropertyEvidence(
+        {
+          propertyId,
+
+          includePrivateFields:
+            false,
+
+          includeAdjustments:
+            false,
+
+          includeDocuments:
+            true
+        },
+
+        {
+          supabaseUrl:
+            SUPABASE_URL,
+
+          serviceKey:
+            SERVICE_KEY
+        }
       );
 
-    const matchingPropertyIds =
+    const rawEntries =
       Array.isArray(
-        property.matching_property_ids
-      ) &&
-      property.matching_property_ids.length
-        ? property.matching_property_ids
-        : [property.id];
+        result.entries
+      )
+        ? result.entries.filter(
+            activeEntry
+          )
+        : [];
 
-    const propertyFilter =
-      matchingPropertyIds.length === 1
-        ? `eq.${encodeURIComponent(
-            matchingPropertyIds[0]
-          )}`
-        : `in.(${matchingPropertyIds
-            .map(value =>
-              encodeURIComponent(value)
-            )
-            .join(",")})`;
-
-    const [
-      homeownerByProperty,
-      allHomeownerRows,
-      contractorByProperty,
-      allContractorRows,
-      historyRows,
-      ratingRows
-    ] =
-      await Promise.all([
-        optionalRest(
-          `homeowner_updates` +
-          `?property_id=${propertyFilter}` +
-          `&select=*` +
-          `&order=created_at.desc`
-        ),
-
-        optionalRest(
-          `homeowner_updates` +
-          `?status=eq.active` +
-          `&select=*` +
-          `&order=created_at.desc`
-        ),
-
-        optionalRest(
-          `contractor_work_submissions` +
-          `?property_id=${propertyFilter}` +
-          `&select=*,contractors(business_name)` +
-          `&order=created_at.desc`
-        ),
-
-        optionalRest(
-          `contractor_work_submissions` +
-          `?select=*,contractors(business_name)` +
-          `&order=created_at.desc`
-        ),
-
-        optionalRest(
-          `property_history_items` +
-          `?property_id=${propertyFilter}` +
-          `&select=*` +
-          `&order=year.desc,created_at.desc`
-        ),
-
-        optionalRest(
-          `property_current_ratings` +
-          `?property_id=eq.${id}` +
-          `&select=*` +
-          `&limit=1`
-        )
-      ]);
-
-    const centralAddress =
-      propertyAddress(property);
-
-    const homeownerByAddress =
-      allHomeownerRows.filter(row =>
-        addressesMatch(
-          centralAddress,
-          row.property_address ||
-          row.address ||
-          row.address_text
+    const timeline =
+      uniqueEntries(
+        rawEntries.map(
+          publicTimelineEntry
         )
       );
-
-    const contractorByAddress =
-      allContractorRows.filter(row =>
-        addressesMatch(
-          centralAddress,
-          row.property_address ||
-          row.address ||
-          row.address_text
-        )
-      );
-
-    const homeownerRows =
-      mergeUniqueRows(
-        homeownerByProperty,
-        homeownerByAddress
-      );
-
-    const contractorRows =
-      mergeUniqueRows(
-        contractorByProperty,
-        contractorByAddress
-      );
-
-    const listingSourceTypes =
-      new Set([
-        "public_listing_history",
-        "listing_update",
-        "listing",
-        "listing_claim",
-        "mls_listing"
-      ]);
-
-    const maintenanceSourceTypes =
-      new Set([
-        "maintenance",
-        "maintenance_record",
-        "home_maintenance",
-        "service_record"
-      ]);
 
     const homeownerUpdates =
-      dedupe(
-        homeownerRows
-          .filter(activeRow)
-          .map(homeownerPublicRow)
+      uniqueEntries(
+        rawEntries
+          .filter(
+            isHomeownerEntry
+          )
+          .map(
+            publicTimelineEntry
+          )
       );
 
     const contractorRecords =
-      dedupe(
-        contractorRows
-          .filter(activeRow)
-          .map(contractorPublicRow)
+      uniqueEntries(
+        rawEntries
+          .filter(
+            isContractorEntry
+          )
+          .map(
+            publicTimelineEntry
+          )
       );
 
     const listingItems =
-      dedupe(
-        historyRows
-          .filter(activeRow)
-          .filter(row =>
-            listingSourceTypes.has(
-              clean(
-                row.source_type ||
-                row.sourceType
-              ).toLowerCase()
-            )
+      uniqueEntries(
+        rawEntries
+          .filter(
+            isListingEntry
           )
-          .map(listingPublicRow)
+          .map(
+            publicTimelineEntry
+          )
       );
 
     const maintenanceRecords =
-      dedupe(
-        historyRows
-          .filter(activeRow)
-          .filter(row =>
-            maintenanceSourceTypes.has(
-              clean(
-                row.source_type ||
-                row.sourceType
-              ).toLowerCase()
-            )
+      uniqueEntries(
+        rawEntries
+          .filter(
+            isMaintenanceEntry
           )
-          .map(maintenancePublicRow)
+          .map(
+            publicTimelineEntry
+          )
       );
-
-    const rating =
-      ratingRows[0] ||
-      null;
-
-    const inputCounts =
-      rating?.rating_input_counts ||
-      {};
 
     return res
       .status(200)
       .json({
         success: true,
 
-        property: {
-          id:
-            property.id,
-
-          fullAddress:
-            property.full_address ||
-            property.address ||
-            property.street ||
-            "",
-
-          city:
-            property.city ||
-            null,
-
-          state:
-            property.state ||
-            null,
-
-          zip:
-            property.zip ||
-            null,
-
-          apn:
-            property.apn ||
-            null
-        },
+        property:
+          result.property,
 
         counts: {
+          timeline:
+            timeline.length,
+
           homeownerUpdates:
             homeownerUpdates.length,
 
-          homeownerByProperty:
-            homeownerByProperty.length,
-
-          homeownerByAddress:
-            homeownerByAddress.length,
-
           contractorUpdates:
             contractorRecords.length,
-
-          contractorByProperty:
-            contractorByProperty.length,
-
-          contractorByAddress:
-            contractorByAddress.length,
 
           listingUpdates:
             listingItems.length,
@@ -1042,9 +608,11 @@ export default async function handler(
             maintenanceRecords.length
         },
 
-        centralRatingInputCounts:
-          inputCounts,
+        evidenceCounts:
+          result.evidenceCounts ||
+          {},
 
+        timeline,
         homeownerUpdates,
         contractorRecords,
         listingItems,
@@ -1052,31 +620,18 @@ export default async function handler(
       });
   } catch (error) {
     console.error(
-      "public-property-history:",
+      "Public property history error:",
       error
     );
 
-    const status =
-      Number(
-        error?.status
-      ) >= 400 &&
-      Number(
-        error?.status
-      ) < 600
-        ? Number(
-            error.status
-          )
-        : 500;
-
     return res
-      .status(status)
+      .status(500)
       .json({
         success: false,
 
         error:
-          error instanceof Error
-            ? error.message
-            : "The public property history could not be loaded."
+          error?.message ||
+          "The public property history could not be loaded."
       });
   }
 }
