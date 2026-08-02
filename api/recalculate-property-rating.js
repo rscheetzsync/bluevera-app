@@ -1647,9 +1647,10 @@ function calculateDocumentScore(
         12,
 
       terms: [
-        "inspection report",
-        "home inspection"
-      ]
+  "inspection report",
+  "home inspection",
+  "inspection page"
+]
     },
 
     {
