@@ -61,13 +61,11 @@ function normalizeAddress(value) {
 }
 
 function addressParts(value) {
-  const normalized =
-    normalizeAddress(value);
+  const normalized = normalizeAddress(value);
 
-  const parts =
-    normalized
-      .split(" ")
-      .filter(Boolean);
+  const parts = normalized
+    .split(" ")
+    .filter(Boolean);
 
   return {
     normalized,
@@ -88,11 +86,8 @@ function addressesMatch(
   firstValue,
   secondValue
 ) {
-  const first =
-    addressParts(firstValue);
-
-  const second =
-    addressParts(secondValue);
+  const first = addressParts(firstValue);
+  const second = addressParts(secondValue);
 
   if (
     !first.normalized ||
@@ -110,8 +105,7 @@ function addressesMatch(
   }
 
   if (
-    first.normalized ===
-      second.normalized ||
+    first.normalized === second.normalized ||
     first.normalized.includes(
       second.normalized
     ) ||
@@ -122,19 +116,17 @@ function addressesMatch(
     return true;
   }
 
-  const shared =
-    first.words.filter(
-      word =>
-        word.length >= 3 &&
-        second.words.includes(word)
-    );
+  const shared = first.words.filter(
+    word =>
+      word.length >= 3 &&
+      second.words.includes(word)
+  );
 
   return shared.length >= 1;
 }
 
 async function readJson(response) {
-  const text =
-    await response.text();
+  const text = await response.text();
 
   if (!text) {
     return null;
@@ -148,40 +140,34 @@ async function readJson(response) {
 }
 
 async function rest(path) {
-  const response =
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/${path}`,
-      {
-        method: "GET",
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}`,
+    {
+      method: "GET",
 
-        headers: {
-          apikey:
-            SERVICE_KEY,
+      headers: {
+        apikey: SERVICE_KEY,
 
-          Authorization:
-            `Bearer ${SERVICE_KEY}`,
+        Authorization:
+          `Bearer ${SERVICE_KEY}`,
 
-          Accept:
-            "application/json"
-        }
+        Accept: "application/json"
       }
-    );
+    }
+  );
 
-  const data =
-    await readJson(response);
+  const data = await readJson(response);
 
   if (!response.ok) {
-    const error =
-      new Error(
-        data?.message ||
-        data?.details ||
-        data?.hint ||
-        data?.error ||
-        `Supabase request failed (${response.status})`
-      );
+    const error = new Error(
+      data?.message ||
+      data?.details ||
+      data?.hint ||
+      data?.error ||
+      `Supabase request failed (${response.status})`
+    );
 
-    error.status =
-      response.status;
+    error.status = response.status;
 
     throw error;
   }
@@ -203,6 +189,31 @@ async function optionalRest(path) {
 
     return [];
   }
+}
+
+function mergeUniqueRows(...groups) {
+  const rows = new Map();
+
+  groups.flat().forEach(row => {
+    if (!row) return;
+
+    const key =
+      clean(row.id) ||
+      [
+        clean(row.property_id),
+        clean(row.property_address),
+        clean(row.created_at),
+        clean(row.update_type),
+        clean(row.note),
+        clean(row.description)
+      ].join("|");
+
+    if (!rows.has(key)) {
+      rows.set(key, row);
+    }
+  });
+
+  return Array.from(rows.values());
 }
 
 function propertyAddress(property) {
@@ -263,12 +274,11 @@ async function resolveProperty({
   address
 }) {
   if (propertyId) {
-    const rows =
-      await rest(
-        `properties?id=eq.${encodeURIComponent(
-          propertyId
-        )}&select=*&limit=1`
-      );
+    const rows = await rest(
+      `properties?id=eq.${encodeURIComponent(
+        propertyId
+      )}&select=*&limit=1`
+    );
 
     return rows[0] || null;
   }
@@ -290,35 +300,33 @@ async function resolveProperty({
       ? `*${number}*`
       : `*${requestedAddress}*`;
 
-  const candidates =
-    await rest(
-      `properties?or=(` +
-      `full_address.ilike.${encodeURIComponent(
-        wildcard
-      )},` +
-      `address.ilike.${encodeURIComponent(
-        wildcard
-      )},` +
-      `street.ilike.${encodeURIComponent(
-        wildcard
-      )}` +
-      `)&select=*&limit=500`
-    );
+  const candidates = await rest(
+    `properties?or=(` +
+    `full_address.ilike.${encodeURIComponent(
+      wildcard
+    )},` +
+    `address.ilike.${encodeURIComponent(
+      wildcard
+    )},` +
+    `street.ilike.${encodeURIComponent(
+      wildcard
+    )}` +
+    `)&select=*&limit=500`
+  );
 
-  const matches =
-    candidates.filter(
-      property =>
-        addressesMatch(
-          requestedAddress,
-          propertyAddress(property)
-        )
-    );
+  const matches = candidates.filter(
+    property =>
+      addressesMatch(
+        requestedAddress,
+        propertyAddress(property)
+      )
+  );
 
   if (!matches.length) {
     return null;
   }
 
-  return matches.reduce(
+  const canonical = matches.reduce(
     (best, candidate) =>
       best
         ? preferProperty(
@@ -329,13 +337,23 @@ async function resolveProperty({
 
     null
   );
+
+  return canonical
+    ? {
+        ...canonical,
+
+        matching_property_ids:
+          matches
+            .map(item => item.id)
+            .filter(Boolean)
+      }
+    : null;
 }
 
 function activeRow(row) {
-  const status =
-    clean(
-      row?.status
-    ).toLowerCase();
+  const status = clean(
+    row?.status
+  ).toLowerCase();
 
   return ![
     "deleted",
@@ -357,13 +375,10 @@ function safeText(
 
 function homeownerPublicRow(row) {
   return {
-    id:
-      clean(row.id),
+    id: clean(row.id),
 
     propertyId:
-      clean(
-        row.property_id
-      ),
+      clean(row.property_id),
 
     updateType:
       safeText(
@@ -422,13 +437,10 @@ function contractorPublicRow(row) {
     row.contractors || {};
 
   return {
-    id:
-      clean(row.id),
+    id: clean(row.id),
 
     propertyId:
-      clean(
-        row.property_id
-      ),
+      clean(row.property_id),
 
     workType:
       safeText(
@@ -491,13 +503,10 @@ function contractorPublicRow(row) {
 
 function listingPublicRow(row) {
   return {
-    id:
-      clean(row.id),
+    id: clean(row.id),
 
     propertyId:
-      clean(
-        row.property_id
-      ),
+      clean(row.property_id),
 
     category:
       safeText(
@@ -559,13 +568,10 @@ function listingPublicRow(row) {
 
 function maintenancePublicRow(row) {
   return {
-    id:
-      clean(row.id),
+    id: clean(row.id),
 
     propertyId:
-      clean(
-        row.property_id
-      ),
+      clean(row.property_id),
 
     category:
       safeText(
@@ -619,8 +625,7 @@ function maintenancePublicRow(row) {
 }
 
 function dedupe(rows) {
-  const found =
-    new Map();
+  const found = new Map();
 
   rows.forEach(row => {
     const key =
@@ -657,9 +662,7 @@ function applyCors(
   res
 ) {
   const origin =
-    clean(
-      req.headers.origin
-    );
+    clean(req.headers.origin);
 
   if (
     origin &&
@@ -691,10 +694,7 @@ export default async function handler(
   req,
   res
 ) {
-  applyCors(
-    req,
-    res
-  );
+  applyCors(req, res);
 
   res.setHeader(
     "Cache-Control",
@@ -706,19 +706,13 @@ export default async function handler(
     "nosniff"
   );
 
-  if (
-    req.method ===
-    "OPTIONS"
-  ) {
+  if (req.method === "OPTIONS") {
     return res
       .status(204)
       .end();
   }
 
-  if (
-    req.method !==
-    "GET"
-  ) {
+  if (req.method !== "GET") {
     res.setHeader(
       "Allow",
       "GET, OPTIONS"
@@ -755,9 +749,7 @@ export default async function handler(
       );
 
     const address =
-      clean(
-        req.query.address
-      );
+      clean(req.query.address);
 
     if (
       !propertyId &&
@@ -795,30 +787,64 @@ export default async function handler(
         property.id
       );
 
+    const matchingPropertyIds =
+      Array.isArray(
+        property.matching_property_ids
+      ) &&
+      property.matching_property_ids.length
+        ? property.matching_property_ids
+        : [property.id];
+
+    const propertyFilter =
+      matchingPropertyIds.length === 1
+        ? `eq.${encodeURIComponent(
+            matchingPropertyIds[0]
+          )}`
+        : `in.(${matchingPropertyIds
+            .map(value =>
+              encodeURIComponent(value)
+            )
+            .join(",")})`;
+
     const [
-      homeownerRows,
-      contractorRows,
+      homeownerByProperty,
+      allHomeownerRows,
+      contractorByProperty,
+      allContractorRows,
       historyRows,
       ratingRows
     ] =
       await Promise.all([
         optionalRest(
           `homeowner_updates` +
-          `?property_id=eq.${id}` +
+          `?property_id=${propertyFilter}` +
+          `&select=*` +
+          `&order=created_at.desc`
+        ),
+
+        optionalRest(
+          `homeowner_updates` +
+          `?status=eq.active` +
           `&select=*` +
           `&order=created_at.desc`
         ),
 
         optionalRest(
           `contractor_work_submissions` +
-          `?property_id=eq.${id}` +
+          `?property_id=${propertyFilter}` +
           `&select=*,contractors(business_name)` +
           `&order=created_at.desc`
         ),
 
         optionalRest(
+          `contractor_work_submissions` +
+          `?select=*,contractors(business_name)` +
+          `&order=created_at.desc`
+        ),
+
+        optionalRest(
           `property_history_items` +
-          `?property_id=eq.${id}` +
+          `?property_id=${propertyFilter}` +
           `&select=*` +
           `&order=year.desc,created_at.desc`
         ),
@@ -830,6 +856,41 @@ export default async function handler(
           `&limit=1`
         )
       ]);
+
+    const centralAddress =
+      propertyAddress(property);
+
+    const homeownerByAddress =
+      allHomeownerRows.filter(row =>
+        addressesMatch(
+          centralAddress,
+          row.property_address ||
+          row.address ||
+          row.address_text
+        )
+      );
+
+    const contractorByAddress =
+      allContractorRows.filter(row =>
+        addressesMatch(
+          centralAddress,
+          row.property_address ||
+          row.address ||
+          row.address_text
+        )
+      );
+
+    const homeownerRows =
+      mergeUniqueRows(
+        homeownerByProperty,
+        homeownerByAddress
+      );
+
+    const contractorRows =
+      mergeUniqueRows(
+        contractorByProperty,
+        contractorByAddress
+      );
 
     const listingSourceTypes =
       new Set([
@@ -903,8 +964,7 @@ export default async function handler(
     return res
       .status(200)
       .json({
-        success:
-          true,
+        success: true,
 
         property: {
           id:
@@ -937,8 +997,20 @@ export default async function handler(
           homeownerUpdates:
             homeownerUpdates.length,
 
+          homeownerByProperty:
+            homeownerByProperty.length,
+
+          homeownerByAddress:
+            homeownerByAddress.length,
+
           contractorUpdates:
             contractorRecords.length,
+
+          contractorByProperty:
+            contractorByProperty.length,
+
+          contractorByAddress:
+            contractorByAddress.length,
 
           listingUpdates:
             listingItems.length,
@@ -962,22 +1034,15 @@ export default async function handler(
     );
 
     const status =
-      Number(
-        error?.status
-      ) >= 400 &&
-      Number(
-        error?.status
-      ) < 600
-        ? Number(
-            error.status
-          )
+      Number(error?.status) >= 400 &&
+      Number(error?.status) < 600
+        ? Number(error.status)
         : 500;
 
     return res
       .status(status)
       .json({
-        success:
-          false,
+        success: false,
 
         error:
           error instanceof Error
