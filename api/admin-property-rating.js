@@ -1,3 +1,8 @@
+import {
+  searchProperties,
+  loadPropertyEvidence
+} from "../lib/property-evidence.js";
+
 const SUPABASE_URL = String(
   process.env.SUPABASE_URL || ""
 ).replace(/\/+$/, "");
@@ -7,342 +12,53 @@ const SERVICE_KEY =
   process.env.SUPABASE_SECRET_KEY ||
   "";
 
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
+const ANON_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  "";
 
 function clean(value) {
   return String(value ?? "").trim();
 }
 
-function normalizeAddress(value) {
-  return clean(value)
-    .toLowerCase()
-    .replace(/[.,#]/g, " ")
-    .replace(/\bwest\b/g, "w")
-    .replace(/\beast\b/g, "e")
-    .replace(/\bnorth\b/g, "n")
-    .replace(/\bsouth\b/g, "s")
-    .replace(/\bavenue\b/g, "ave")
-    .replace(/\bstreet\b/g, "st")
-    .replace(/\bdrive\b/g, "dr")
-    .replace(/\broad\b/g, "rd")
-    .replace(/\bboulevard\b/g, "blvd")
-    .replace(/\bplace\b/g, "pl")
-    .replace(/\bcourt\b/g, "ct")
-    .replace(/\bcircle\b/g, "cir")
-    .replace(/\blane\b/g, "ln")
-    .replace(/\bterrace\b/g, "ter")
-    .replace(/\bparkway\b/g, "pkwy")
-    .replace(
-      /\b(arizona|az|phoenix|glendale|scottsdale|tempe|mesa|chandler|gilbert|paradise valley)\b/g,
-      " "
-    )
-    .replace(/\b\d{5}(?:-\d{4})?\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
-function addressParts(value) {
-  const normalized = normalizeAddress(value);
-  const parts = normalized.split(" ").filter(Boolean);
+/* =========================================================
+   SUPABASE REQUEST
+   ========================================================= */
 
-  const number =
-    parts.find(part => /^\d+[a-z]?$/.test(part)) || "";
-
-  const words = parts.filter(
-    part => !/^\d+[a-z]?$/.test(part)
-  );
-
-  return {
-    normalized,
-    number,
-    words
-  };
-}
-
-function addressesMatch(firstAddress, secondAddress) {
-  const first = addressParts(firstAddress);
-  const second = addressParts(secondAddress);
-
-  if (!first.normalized || !second.normalized) {
-    return false;
-  }
-
-  if (
-    first.number &&
-    second.number &&
-    first.number !== second.number
-  ) {
-    return false;
-  }
-
-  if (first.normalized === second.normalized) {
-    return true;
-  }
-
-  if (
-    first.normalized.includes(second.normalized) ||
-    second.normalized.includes(first.normalized)
-  ) {
-    return true;
-  }
-
-  const sharedWords = first.words.filter(
-    word =>
-      word.length >= 3 &&
-      second.words.includes(word)
-  );
-
-  return sharedWords.length >= 1;
-}
-
-function propertyAddress(property) {
-  return clean(
-    property?.full_address ||
-    property?.address ||
-    property?.street
-  );
-}
-
-function addressLookupPattern(value) {
-  const parts = addressParts(value);
-
-  if (!parts.number) {
-    return "";
-  }
-
-  const streetWords = parts.words
-    .filter(word => word.length >= 3)
-    .slice(0, 2);
-
-  if (!streetWords.length) {
-    return "";
-  }
-
-  return `*${[
-    parts.number,
-    ...streetWords
-  ].join("*")}*`;
-}
-
-function sellerDocumentAddressPath(address) {
-  const pattern = addressLookupPattern(address);
-
-  if (!pattern) {
-    return "";
-  }
-
-  return (
-    "seller_documents?" +
-    `property_address=ilike.${encodeURIComponent(pattern)}` +
-    "&select=*&limit=100"
-  );
-}
-
-function propertyQuality(property) {
-  const hasCalculatedRating =
-    property?.rating_updated_at &&
-    property?.current_rating !== null &&
-    property?.current_rating !== undefined;
-
-  const ratingTime =
-    Date.parse(
-      property?.rating_updated_at ||
-      property?.updated_at ||
-      property?.created_at ||
-      ""
-    ) || 0;
-
-  return {
-    calculated: hasCalculatedRating ? 1 : 0,
-    ratingTime,
-    evidence:
-      Number(property?.history_score || 0) +
-      Number(property?.document_score || 0)
-  };
-}
-
-function preferCanonicalProperty(first, second) {
-  const firstQuality = propertyQuality(first);
-  const secondQuality = propertyQuality(second);
-
-  if (
-    firstQuality.calculated !==
-    secondQuality.calculated
-  ) {
-    return secondQuality.calculated >
-      firstQuality.calculated
-      ? second
-      : first;
-  }
-
-  if (
-    firstQuality.ratingTime !==
-    secondQuality.ratingTime
-  ) {
-    return secondQuality.ratingTime >
-      firstQuality.ratingTime
-      ? second
-      : first;
-  }
-
-  if (
-    firstQuality.evidence !==
-    secondQuality.evidence
-  ) {
-    return secondQuality.evidence >
-      firstQuality.evidence
-      ? second
-      : first;
-  }
-
-  return first;
-}
-
-function collapseDuplicateProperties(properties) {
-  const canonical = [];
-
-  (Array.isArray(properties) ? properties : [])
-    .forEach(property => {
-      const address = propertyAddress(property);
-
-      const duplicateIndex = canonical.findIndex(
-        existing =>
-          addressesMatch(
-            address,
-            propertyAddress(existing)
-          )
-      );
-
-      if (duplicateIndex < 0) {
-        canonical.push(property);
-        return;
-      }
-
-      canonical[duplicateIndex] =
-        preferCanonicalProperty(
-          canonical[duplicateIndex],
-          property
-        );
-    });
-
-  return canonical;
-}
-
-function mergeUniqueRows(...groups) {
-  const rows = new Map();
-
-  groups.flat().forEach(row => {
-    if (!row) return;
-
-    const key =
-      clean(row.id) ||
-      [
-        clean(row.property_id),
-        clean(row.property_address),
-        clean(row.created_at),
-        clean(row.statement),
-        clean(row.description),
-        clean(row.note)
-      ].join("|");
-
-    if (!rows.has(key)) {
-      rows.set(key, row);
-    }
-  });
-
-  return Array.from(rows.values());
-}
-
-function dedupeHomeownerUpdates(rows) {
-  const unique = new Map();
-
-  (Array.isArray(rows) ? rows : [])
-    .forEach((row, index) => {
-      const key =
-        clean(
-          row?.update_type ||
-          row?.system_name ||
-          row?.category ||
-          row?.title ||
-          row?.work_type
-        )
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, " ")
-          .trim() ||
-        `record-${clean(row?.id) || index}`;
-
-      const existing = unique.get(key);
-
-      if (!existing) {
-        unique.set(key, row);
-        return;
-      }
-
-      const rank = item => {
-        const status = clean(
-          item?.verification_status ||
-          item?.record_status ||
-          item?.status
-        ).toLowerCase();
-
-        return {
-          evidence:
-            /verified/.test(status)
-              ? 3
-              : /documented|receipt|invoice|permit/.test(
-                  status
-                )
-              ? 2
-              : 1,
-
-          time:
-            Date.parse(
-              item?.updated_at ||
-              item?.created_at ||
-              item?.completed_date ||
-              item?.approximate_date ||
-              ""
-            ) || 0
-        };
-      };
-
-      const oldRank = rank(existing);
-      const newRank = rank(row);
-
-      if (
-        newRank.evidence > oldRank.evidence ||
-        (
-          newRank.evidence === oldRank.evidence &&
-          newRank.time > oldRank.time
-        )
-      ) {
-        unique.set(key, row);
-      }
-    });
-
-  return Array.from(unique.values());
-}
-
-async function rest(path, options = {}) {
+async function rest(
+  path,
+  options = {}
+) {
   const response = await fetch(
     `${SUPABASE_URL}/rest/v1/${path}`,
     {
       ...options,
+
       headers: {
-        apikey: SERVICE_KEY,
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
+        apikey:
+          SERVICE_KEY,
+
+        Authorization:
+          `Bearer ${SERVICE_KEY}`,
+
+        "Content-Type":
+          "application/json",
+
         ...(options.headers || {})
       }
     }
   );
 
-  const text = await response.text();
+  const text =
+    await response.text();
 
   let data = null;
 
   try {
-    data = text ? JSON.parse(text) : null;
+    data =
+      text
+        ? JSON.parse(text)
+        : null;
   } catch {
     data = text;
   }
@@ -360,222 +76,18 @@ async function rest(path, options = {}) {
   return data;
 }
 
-async function optionalRest(path, options = {}) {
-  try {
-    const data = await rest(path, options);
 
-    return Array.isArray(data) ? data : [];
-  } catch (error) {
-    console.warn(
-      "Optional property source unavailable:",
-      path,
-      error?.message
-    );
-
-    return [];
-  }
-}
-
-function firstValue(row, keys, fallback = "") {
-  for (const key of keys) {
-    const value = row?.[key];
-
-    if (
-      value !== null &&
-      value !== undefined &&
-      clean(value) !== ""
-    ) {
-      return value;
-    }
-  }
-
-  return fallback;
-}
-
-function normalizeEvidenceRow(row, defaults = {}) {
-  const statement = firstValue(
-    row,
-    [
-      "statement",
-      "description",
-      "work_description",
-      "update_description",
-      "note",
-      "notes",
-      "details",
-      "summary",
-      "title",
-      "document_name",
-      "file_name"
-    ],
-    "Record available"
-  );
-
-  return {
-    id: firstValue(
-      row,
-      ["id"],
-      `${defaults.sourceType || "record"}-${Math.random()}`
-    ),
-
-    property_id: firstValue(
-      row,
-      ["property_id"],
-      defaults.propertyId || null
-    ),
-
-    category: firstValue(
-      row,
-      [
-        "category",
-        "record_category",
-        "update_type",
-        "work_type",
-        "document_type"
-      ],
-      defaults.category || "Property Record"
-    ),
-
-    system_name: firstValue(
-      row,
-      [
-        "system_name",
-        "system",
-        "home_system",
-        "trade",
-        "service_type",
-        "update_type",
-        "work_type"
-      ],
-      defaults.systemName || "—"
-    ),
-
-    event_year: firstValue(
-      row,
-      [
-        "event_year",
-        "year",
-        "service_year",
-        "work_year",
-        "installed_year",
-        "replacement_year"
-      ],
-      null
-    ),
-
-    event_date: firstValue(
-      row,
-      [
-        "event_date",
-        "service_date",
-        "work_date",
-        "completed_date",
-        "completed_at",
-        "inspection_date",
-        "approximate_date"
-      ],
-      null
-    ),
-
-    statement: clean(statement),
-
-    source_type: firstValue(
-      row,
-      ["source_type"],
-      defaults.sourceType || "property_record"
-    ),
-
-    source_name: firstValue(
-      row,
-      [
-        "source_name",
-        "business_name",
-        "contractor_name",
-        "homeowner_name",
-        "company_name",
-        "contractor",
-        "email"
-      ],
-      defaults.sourceName || ""
-    ),
-
-    verification_status: firstValue(
-      row,
-      [
-        "verification_status",
-        "status",
-        "record_status"
-      ],
-      defaults.verificationStatus || "submitted"
-    ),
-
-    document_type: firstValue(
-      row,
-      ["document_type", "file_type"],
-      defaults.documentType || ""
-    ),
-
-    document_url: firstValue(
-      row,
-      [
-        "document_url",
-        "file_url",
-        "report_url",
-        "receipt_url",
-        "invoice_url",
-        "storage_url",
-        "public_url"
-      ],
-      ""
-    ),
-
-    created_at: firstValue(
-      row,
-      ["created_at", "submitted_at"],
-      null
-    ),
-
-    updated_at: firstValue(
-      row,
-      [
-        "updated_at",
-        "modified_at",
-        "created_at",
-        "submitted_at"
-      ],
-      null
-    ),
-
-    original_table: defaults.originalTable || ""
-  };
-}
-
-function sortEvidenceRows(rows) {
-  return [...rows].sort((first, second) => {
-    const firstDate =
-      Date.parse(
-        first.updated_at ||
-        first.created_at ||
-        first.event_date ||
-        ""
-      ) || 0;
-
-    const secondDate =
-      Date.parse(
-        second.updated_at ||
-        second.created_at ||
-        second.event_date ||
-        ""
-      ) || 0;
-
-    return secondDate - firstDate;
-  });
-}
+/* =========================================================
+   VERIFY ADMIN
+   ========================================================= */
 
 async function verifyAdmin(req) {
   const token = clean(
     req.headers.authorization
-  ).replace(/^Bearer\s+/i, "");
+  ).replace(
+    /^Bearer\s+/i,
+    ""
+  );
 
   if (!token) {
     throw new Error(
@@ -587,17 +99,24 @@ async function verifyAdmin(req) {
     `${SUPABASE_URL}/auth/v1/user`,
     {
       headers: {
-        apikey: ANON_KEY,
-        Authorization: `Bearer ${token}`
+        apikey:
+          ANON_KEY,
+
+        Authorization:
+          `Bearer ${token}`
       }
     }
   );
 
-  const user = await response
-    .json()
-    .catch(() => null);
+  const user =
+    await response
+      .json()
+      .catch(() => null);
 
-  if (!response.ok || !user?.id) {
+  if (
+    !response.ok ||
+    !user?.id
+  ) {
     throw new Error(
       "The admin login session is invalid or expired."
     );
@@ -610,10 +129,15 @@ async function verifyAdmin(req) {
     }
   );
 
-  const email = clean(user.email).toLowerCase();
+  const email =
+    clean(
+      user.email
+    ).toLowerCase();
 
   const admin = (
-    Array.isArray(admins) ? admins : []
+    Array.isArray(admins)
+      ? admins
+      : []
   ).find(row => {
     const ids = [
       row.id,
@@ -625,11 +149,17 @@ async function verifyAdmin(req) {
       row.email,
       row.admin_email,
       row.username
-    ].map(value => clean(value).toLowerCase());
+    ].map(value =>
+      clean(value)
+        .toLowerCase()
+    );
 
     return (
       ids.includes(user.id) ||
-      (email && emails.includes(email))
+      (
+        email &&
+        emails.includes(email)
+      )
     );
   });
 
@@ -664,431 +194,10 @@ async function verifyAdmin(req) {
   };
 }
 
-async function searchProperties(query) {
-  const q = clean(query);
 
-  if (!q) return [];
-
-  const encoded = encodeURIComponent(`*${q}*`);
-  const uuidLike = /^[0-9a-f-]{30,}$/i.test(q);
-
-  let path;
-
-  if (uuidLike) {
-    path =
-      "properties?or=(" +
-      `id.eq.${encodeURIComponent(q)},` +
-      `full_address.ilike.${encoded},` +
-      `normalized_address.ilike.${encoded},` +
-      `apn.ilike.${encoded}` +
-      ")&select=*&limit=25";
-  } else {
-    path =
-      "properties?or=(" +
-      `full_address.ilike.${encoded},` +
-      `address.ilike.${encoded},` +
-      `street.ilike.${encoded},` +
-      `normalized_address.ilike.${encoded},` +
-      `apn.ilike.${encoded}` +
-      ")&select=*&limit=25";
-  }
-
-  const rows = await rest(path, {
-    method: "GET"
-  });
-
-  return collapseDuplicateProperties(
-    Array.isArray(rows) ? rows : []
-  );
-}
-
-async function loadProperty(propertyId) {
-  const rawPropertyId = clean(propertyId);
-  const id = encodeURIComponent(rawPropertyId);
-
-  const properties = await rest(
-    `properties?id=eq.${id}&select=*&limit=1`,
-    {
-      method: "GET"
-    }
-  );
-
-  let property = Array.isArray(properties)
-    ? properties[0]
-    : null;
-
-  if (!property) {
-    throw new Error(
-      "The central property record was not found."
-    );
-  }
-
-  const ratingRows = await optionalRest(
-    `property_current_ratings?property_id=eq.${id}&select=*&limit=1`,
-    { method: "GET" }
-  );
-
-  const authoritativeRating =
-    ratingRows[0] || null;
-
-  if (authoritativeRating) {
-    property = {
-      ...property,
-      current_rating:
-        authoritativeRating
-          .disclosure_rating,
-      rating_band:
-        authoritativeRating
-          .rating_level,
-      history_score:
-        authoritativeRating
-          .history_score,
-      document_score:
-        authoritativeRating
-          .document_score,
-      rating_breakdown:
-        authoritativeRating
-          .rating_breakdown,
-      rating_improvement_items:
-        authoritativeRating
-          .rating_improvement_items,
-      rating_input_counts:
-        authoritativeRating
-          .rating_input_counts,
-      rating_version:
-        authoritativeRating
-          .formula_version,
-      rating_updated_at:
-        authoritativeRating
-          .calculated_at,
-      rating_source:
-        "property_ratings"
-    };
-  }
-
-  const propertyAddressValue = clean(
-    property.full_address ||
-    property.address ||
-    property.street
-  );
-
-  const [
-    reportEntries,
-    adjustments,
-    homeownerById,
-    contractorById,
-    allHomeownerUpdates,
-    allContractorWork,
-    contractorDocuments,
-    propertyDocuments,
-    sellerDocumentsById,
-    sellerDocumentCandidates,
-    propertyHistoryItems
-  ] = await Promise.all([
-    optionalRest(
-      `property_report_entries?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    ),
-
-    rest(
-      `property_rating_adjustments?property_id=eq.${id}&select=*&order=created_at.desc`,
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      `homeowner_updates?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      `contractor_work_submissions?property_id=eq.${id}&select=*,contractors(business_name,phone,email,license_number,insurance_status)`,
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      "homeowner_updates?status=eq.active&select=*&order=created_at.desc",
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      "contractor_work_submissions?select=*,contractors(business_name,phone,email,license_number,insurance_status)&order=created_at.desc",
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      `contractor_documents?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      `property_documents?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    ),
-
-    optionalRest(
-      `seller_documents?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    ),
-
-    sellerDocumentAddressPath(propertyAddressValue)
-      ? optionalRest(
-          sellerDocumentAddressPath(
-            propertyAddressValue
-          ),
-          { method: "GET" }
-        )
-      : Promise.resolve([]),
-
-    optionalRest(
-      `property_history_items?property_id=eq.${id}&select=*`,
-      { method: "GET" }
-    )
-  ]);
-
-  const homeownerByAddress =
-    allHomeownerUpdates.filter(row =>
-      addressesMatch(
-        propertyAddressValue,
-        row.property_address
-      )
-    );
-
-  const contractorByAddress =
-    allContractorWork.filter(row =>
-      addressesMatch(
-        propertyAddressValue,
-        row.property_address
-      )
-    );
-
-  const homeownerUpdates =
-    dedupeHomeownerUpdates(
-      mergeUniqueRows(
-        homeownerById,
-        homeownerByAddress
-      )
-    );
-
-  const contractorWork = mergeUniqueRows(
-    contractorById,
-    contractorByAddress
-  );
-
-  const sellerDocumentsByAddress =
-    sellerDocumentCandidates.filter(row =>
-      addressesMatch(
-        propertyAddressValue,
-        row.property_address ||
-        row.address_text ||
-        row.address
-      )
-    );
-
-  const sellerDocuments = mergeUniqueRows(
-    sellerDocumentsById,
-    sellerDocumentsByAddress
-  );
-
-  const entries = [
-    ...reportEntries.map(row =>
-      normalizeEvidenceRow(row, {
-        propertyId: property.id,
-        originalTable: "property_report_entries"
-      })
-    ),
-
-    ...homeownerUpdates.map(row =>
-      normalizeEvidenceRow(
-        {
-          ...row,
-
-          statement:
-            row.note ||
-            row.update_type ||
-            "Homeowner update",
-
-          system_name:
-            row.update_type ||
-            "Homeowner update",
-
-          event_date:
-            row.approximate_date ||
-            row.created_at,
-
-          source_name:
-            row.contractor ||
-            row.email ||
-            "Homeowner",
-
-          verification_status:
-            row.record_status ||
-            "homeowner_submitted"
-        },
-        {
-          propertyId: property.id,
-          category: "Homeowner Reported Update",
-          sourceType: "homeowner_update",
-          sourceName: "Homeowner",
-          verificationStatus:
-            "homeowner_submitted",
-          originalTable: "homeowner_updates"
-        }
-      )
-    ),
-
-    ...contractorWork.map(row =>
-      normalizeEvidenceRow(
-        {
-          ...row,
-
-          statement:
-            row.description ||
-            row.work_type ||
-            "Contractor work record",
-
-          system_name:
-            row.work_type ||
-            "Contractor work",
-
-          event_date:
-            row.completed_date ||
-            row.created_at,
-
-          source_name:
-            row.contractors?.business_name ||
-            row.contractor_name ||
-            "Contractor",
-
-          verification_status:
-            row.status ||
-            "contractor_submitted",
-
-          document_type:
-            row.permit_number
-              ? "Permit reference"
-              : ""
-        },
-        {
-          propertyId: property.id,
-          category: "Contractor Work Record",
-          sourceType: "contractor_record",
-          sourceName: "Contractor",
-          verificationStatus:
-            "contractor_submitted",
-          originalTable:
-            "contractor_work_submissions"
-        }
-      )
-    ),
-
-    ...contractorDocuments.map(row =>
-      normalizeEvidenceRow(row, {
-        propertyId: property.id,
-        category: "Contractor Document",
-        sourceType: "contractor_document",
-        sourceName: "Contractor",
-        verificationStatus: "document_uploaded",
-        originalTable: "contractor_documents"
-      })
-    ),
-
-    ...propertyDocuments.map(row =>
-      normalizeEvidenceRow(row, {
-        propertyId: property.id,
-        category: "Property Document",
-        sourceType: "property_document",
-        sourceName: "BlueVera Document",
-        verificationStatus: "document_uploaded",
-        originalTable: "property_documents"
-      })
-    ),
-
-    ...sellerDocuments.map(row =>
-      normalizeEvidenceRow(row, {
-        propertyId: property.id,
-        category: "Seller Document",
-        sourceType: "seller_document",
-        sourceName: "Seller",
-        verificationStatus: "document_uploaded",
-        originalTable: "seller_documents"
-      })
-    ),
-
-    ...propertyHistoryItems.map(row =>
-      normalizeEvidenceRow(row, {
-        propertyId: property.id,
-        category: "Property History Item",
-        sourceType: "property_history",
-        sourceName: "BlueVera",
-        verificationStatus: "recorded",
-        originalTable: "property_history_items"
-      })
-    )
-  ];
-
-  const adjustmentRows = Array.isArray(adjustments)
-    ? adjustments
-    : [];
-
-  const adjustmentTotal =
-    adjustmentRows.reduce(
-      (total, row) =>
-        total +
-        Number(row.adjustment_points || 0),
-      0
-    );
-
-  return {
-    property,
-
-    entries: sortEvidenceRows(entries),
-
-    adjustments: adjustmentRows,
-
-    adjustmentTotal,
-
-    evidenceCounts: {
-      listingAndReportEntries:
-        reportEntries.length,
-
-      homeownerUpdates:
-        homeownerUpdates.length,
-
-      homeownerByPropertyId:
-        homeownerById.length,
-
-      homeownerByAddress:
-        homeownerByAddress.length,
-
-      contractorWork:
-        contractorWork.length,
-
-      contractorByPropertyId:
-        contractorById.length,
-
-      contractorByAddress:
-        contractorByAddress.length,
-
-      contractorDocuments:
-        contractorDocuments.length,
-
-      propertyDocuments:
-        propertyDocuments.length,
-
-      sellerDocuments:
-        sellerDocuments.length,
-
-      sellerDocumentsByPropertyId:
-        sellerDocumentsById.length,
-
-      sellerDocumentsByAddress:
-        sellerDocumentsByAddress.length,
-
-      propertyHistoryItems:
-        propertyHistoryItems.length
-    }
-  };
-}
+/* =========================================================
+   CENTRAL RATING RECALCULATION
+   ========================================================= */
 
 async function callCentralRecalculation(
   req,
@@ -1103,22 +212,31 @@ async function callCentralRecalculation(
     `${origin}/api/recalculate-property-rating`,
     {
       method: "POST",
+
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type":
+          "application/json",
+
         Authorization:
           req.headers.authorization
       },
-      body: JSON.stringify({
-        propertyId
-      })
+
+      body:
+        JSON.stringify({
+          propertyId
+        })
     }
   );
 
-  const result = await response
-    .json()
-    .catch(() => ({}));
+  const result =
+    await response
+      .json()
+      .catch(() => ({}));
 
-  if (!response.ok || !result.success) {
+  if (
+    !response.ok ||
+    !result.success
+  ) {
     throw new Error(
       result.error ||
       "The central property rating could not be recalculated."
@@ -1128,13 +246,19 @@ async function callCentralRecalculation(
   return result;
 }
 
+
+/* =========================================================
+   SAVE ADMIN ADJUSTMENT
+   ========================================================= */
+
 async function saveAdjustment(
   propertyId,
   points,
   reason,
   adminContext
 ) {
-  const value = Number(points);
+  const value =
+    Number(points);
 
   if (
     !Number.isInteger(value) ||
@@ -1146,37 +270,65 @@ async function saveAdjustment(
     );
   }
 
-  if (clean(reason).length < 12) {
+  if (
+    clean(reason).length < 12
+  ) {
     throw new Error(
       "A specific adjustment reason is required."
     );
   }
 
   const payload = {
-    property_id: clean(propertyId),
-    adjustment_points: value,
-    reason: clean(reason),
-    created_by: adminContext.user.id,
+    property_id:
+      clean(propertyId),
+
+    adjustment_points:
+      value,
+
+    reason:
+      clean(reason),
+
+    created_by:
+      adminContext.user.id,
+
     admin_email:
-      adminContext.user.email || null,
-    created_at: new Date().toISOString()
+      adminContext.user.email ||
+      null,
+
+    created_at:
+      new Date()
+        .toISOString()
   };
 
   const rows = await rest(
     "property_rating_adjustments",
     {
       method: "POST",
+
       headers: {
-        Prefer: "return=representation"
+        Prefer:
+          "return=representation"
       },
-      body: JSON.stringify(payload)
+
+      body:
+        JSON.stringify(payload)
     }
   );
 
-  return Array.isArray(rows) ? rows[0] : rows;
+  return Array.isArray(rows)
+    ? rows[0]
+    : rows;
 }
 
-export default async function handler(req, res) {
+
+/* =========================================================
+   API HANDLER
+   ========================================================= */
+
+export default async function handler(
+  req,
+  res
+) {
   res.setHeader(
     "Content-Type",
     "application/json"
@@ -1192,89 +344,187 @@ export default async function handler(req, res) {
     !SERVICE_KEY ||
     !ANON_KEY
   ) {
-    return res.status(500).json({
-      success: false,
-      error:
-        "Supabase server environment variables are not configured."
-    });
+    return res
+      .status(500)
+      .json({
+        success: false,
+
+        error:
+          "Supabase server environment variables are not configured."
+      });
   }
 
   try {
-    const adminContext = await verifyAdmin(req);
+    const adminContext =
+      await verifyAdmin(req);
 
-    if (req.method === "GET") {
-      const action = clean(req.query.action);
+    /* =========================
+       GET REQUESTS
+       ========================= */
 
-      if (action === "search") {
+    if (
+      req.method ===
+      "GET"
+    ) {
+      const action =
+        clean(
+          req.query.action
+        );
+
+      /* Search central properties */
+
+      if (
+        action ===
+        "search"
+      ) {
         const properties =
-          await searchProperties(req.query.q);
+          await searchProperties(
+            req.query.q,
+            {
+              supabaseUrl:
+                SUPABASE_URL,
 
-        return res.status(200).json({
-          success: true,
-          properties
-        });
+              serviceKey:
+                SERVICE_KEY
+            }
+          );
+
+        return res
+          .status(200)
+          .json({
+            success: true,
+            properties
+          });
       }
 
-      if (action === "load") {
-        const propertyId = clean(req.query.id);
+      /* Load central evidence ledger */
+
+      if (
+        action ===
+        "load"
+      ) {
+        const propertyId =
+          clean(
+            req.query.id
+          );
 
         if (!propertyId) {
-          return res.status(400).json({
-            success: false,
-            error: "A property ID is required."
-          });
+          return res
+            .status(400)
+            .json({
+              success: false,
+
+              error:
+                "A property ID is required."
+            });
         }
 
         const result =
-          await loadProperty(propertyId);
+          await loadPropertyEvidence(
+            {
+              propertyId,
 
-        return res.status(200).json({
-          success: true,
-          ...result
-        });
+              includePrivateFields:
+                true,
+
+              includeAdjustments:
+                true,
+
+              includeDocuments:
+                true
+            },
+
+            {
+              supabaseUrl:
+                SUPABASE_URL,
+
+              serviceKey:
+                SERVICE_KEY
+            }
+          );
+
+        return res
+          .status(200)
+          .json({
+            success: true,
+            ...result
+          });
       }
 
-      return res.status(400).json({
-        success: false,
-        error:
-          "Unknown admin property action."
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Unknown admin property action."
+        });
     }
 
-    if (req.method === "POST") {
+    /* =========================
+       POST REQUESTS
+       ========================= */
+
+    if (
+      req.method ===
+      "POST"
+    ) {
       const body =
-        typeof req.body === "string"
-          ? JSON.parse(req.body)
+        typeof req.body ===
+        "string"
+          ? JSON.parse(
+              req.body
+            )
           : req.body || {};
 
-      const action = clean(body.action);
+      const action =
+        clean(
+          body.action
+        );
 
-      const propertyId = clean(
-        body.propertyId ||
-        body.property_id
-      );
+      const propertyId =
+        clean(
+          body.propertyId ||
+          body.property_id
+        );
 
       if (!propertyId) {
-        return res.status(400).json({
-          success: false,
-          error: "A property ID is required."
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+
+            error:
+              "A property ID is required."
+          });
       }
 
-      if (action === "recalculate") {
+      /* Recalculate rating */
+
+      if (
+        action ===
+        "recalculate"
+      ) {
         const rating =
           await callCentralRecalculation(
             req,
             propertyId
           );
 
-        return res.status(200).json({
-          success: true,
-          ...rating
-        });
+        return res
+          .status(200)
+          .json({
+            success: true,
+            ...rating
+          });
       }
 
-      if (action === "adjust") {
+      /* Save audited adjustment */
+
+      if (
+        action ===
+        "adjust"
+      ) {
         const adjustment =
           await saveAdjustment(
             propertyId,
@@ -1289,27 +539,44 @@ export default async function handler(req, res) {
             propertyId
           );
 
-        return res.status(200).json({
-          success: true,
-          adjustment,
-          rating:
-            rating.rating,
-          band:
-            rating.band
-        });
+        return res
+          .status(200)
+          .json({
+            success: true,
+
+            adjustment,
+
+            rating:
+              rating.rating,
+
+            band:
+              rating.band
+          });
       }
 
-      return res.status(400).json({
-        success: false,
-        error:
-          "Unknown admin property action."
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+
+          error:
+            "Unknown admin property action."
+        });
     }
 
-    return res.status(405).json({
-      success: false,
-      error: "Method not allowed."
-    });
+    res.setHeader(
+      "Allow",
+      "GET, POST"
+    );
+
+    return res
+      .status(405)
+      .json({
+        success: false,
+
+        error:
+          "Method not allowed."
+      });
   } catch (error) {
     const message =
       error?.message ||
@@ -1321,9 +588,11 @@ export default async function handler(req, res) {
         ? 401
         : 500;
 
-    return res.status(status).json({
-      success: false,
-      error: message
-    });
+    return res
+      .status(status)
+      .json({
+        success: false,
+        error: message
+      });
   }
 }
