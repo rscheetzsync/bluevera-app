@@ -7,13 +7,6 @@ const SERVICE_KEY =
   process.env.SUPABASE_SECRET_KEY ||
   "";
 
-const ALLOWED_ORIGINS = new Set([
-  "https://bluevera.org",
-  "https://www.bluevera.org",
-  "https://bluevera.app",
-  "https://www.bluevera.app"
-]);
-
 function clean(value) {
   return String(value ?? "").trim();
 }
@@ -61,11 +54,13 @@ function normalizeAddress(value) {
 }
 
 function addressParts(value) {
-  const normalized = normalizeAddress(value);
+  const normalized =
+    normalizeAddress(value);
 
-  const parts = normalized
-    .split(" ")
-    .filter(Boolean);
+  const parts =
+    normalized
+      .split(" ")
+      .filter(Boolean);
 
   return {
     normalized,
@@ -86,8 +81,11 @@ function addressesMatch(
   firstValue,
   secondValue
 ) {
-  const first = addressParts(firstValue);
-  const second = addressParts(secondValue);
+  const first =
+    addressParts(firstValue);
+
+  const second =
+    addressParts(secondValue);
 
   if (
     !first.normalized ||
@@ -105,7 +103,8 @@ function addressesMatch(
   }
 
   if (
-    first.normalized === second.normalized ||
+    first.normalized ===
+      second.normalized ||
     first.normalized.includes(
       second.normalized
     ) ||
@@ -116,17 +115,19 @@ function addressesMatch(
     return true;
   }
 
-  const shared = first.words.filter(
-    word =>
-      word.length >= 3 &&
-      second.words.includes(word)
-  );
+  const shared =
+    first.words.filter(
+      word =>
+        word.length >= 3 &&
+        second.words.includes(word)
+    );
 
   return shared.length >= 1;
 }
 
 async function readJson(response) {
-  const text = await response.text();
+  const text =
+    await response.text();
 
   if (!text) {
     return null;
@@ -140,34 +141,40 @@ async function readJson(response) {
 }
 
 async function rest(path) {
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/${path}`,
-    {
-      method: "GET",
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/${path}`,
+      {
+        method: "GET",
 
-      headers: {
-        apikey: SERVICE_KEY,
+        headers: {
+          apikey:
+            SERVICE_KEY,
 
-        Authorization:
-          `Bearer ${SERVICE_KEY}`,
+          Authorization:
+            `Bearer ${SERVICE_KEY}`,
 
-        Accept: "application/json"
+          Accept:
+            "application/json"
+        }
       }
-    }
-  );
-
-  const data = await readJson(response);
-
-  if (!response.ok) {
-    const error = new Error(
-      data?.message ||
-      data?.details ||
-      data?.hint ||
-      data?.error ||
-      `Supabase request failed (${response.status})`
     );
 
-    error.status = response.status;
+  const data =
+    await readJson(response);
+
+  if (!response.ok) {
+    const error =
+      new Error(
+        data?.message ||
+        data?.details ||
+        data?.hint ||
+        data?.error ||
+        `Supabase request failed (${response.status})`
+      );
+
+    error.status =
+      response.status;
 
     throw error;
   }
@@ -274,11 +281,12 @@ async function resolveProperty({
   address
 }) {
   if (propertyId) {
-    const rows = await rest(
-      `properties?id=eq.${encodeURIComponent(
-        propertyId
-      )}&select=*&limit=1`
-    );
+    const rows =
+      await rest(
+        `properties?id=eq.${encodeURIComponent(
+          propertyId
+        )}&select=*&limit=1`
+      );
 
     return rows[0] || null;
   }
@@ -300,43 +308,46 @@ async function resolveProperty({
       ? `*${number}*`
       : `*${requestedAddress}*`;
 
-  const candidates = await rest(
-    `properties?or=(` +
-    `full_address.ilike.${encodeURIComponent(
-      wildcard
-    )},` +
-    `address.ilike.${encodeURIComponent(
-      wildcard
-    )},` +
-    `street.ilike.${encodeURIComponent(
-      wildcard
-    )}` +
-    `)&select=*&limit=500`
-  );
+  const candidates =
+    await rest(
+      `properties?or=(` +
+      `full_address.ilike.${encodeURIComponent(
+        wildcard
+      )},` +
+      `address.ilike.${encodeURIComponent(
+        wildcard
+      )},` +
+      `street.ilike.${encodeURIComponent(
+        wildcard
+      )}` +
+      `)&select=*&limit=500`
+    );
 
-  const matches = candidates.filter(
-    property =>
-      addressesMatch(
-        requestedAddress,
-        propertyAddress(property)
-      )
-  );
+  const matches =
+    candidates.filter(
+      property =>
+        addressesMatch(
+          requestedAddress,
+          propertyAddress(property)
+        )
+    );
 
   if (!matches.length) {
     return null;
   }
 
-  const canonical = matches.reduce(
-    (best, candidate) =>
-      best
-        ? preferProperty(
-            best,
-            candidate
-          )
-        : candidate,
+  const canonical =
+    matches.reduce(
+      (best, candidate) =>
+        best
+          ? preferProperty(
+              best,
+              candidate
+            )
+          : candidate,
 
-    null
-  );
+      null
+    );
 
   return canonical
     ? {
@@ -351,9 +362,10 @@ async function resolveProperty({
 }
 
 function activeRow(row) {
-  const status = clean(
-    row?.status
-  ).toLowerCase();
+  const status =
+    clean(
+      row?.status
+    ).toLowerCase();
 
   return ![
     "deleted",
@@ -375,10 +387,13 @@ function safeText(
 
 function homeownerPublicRow(row) {
   return {
-    id: clean(row.id),
+    id:
+      clean(row.id),
 
     propertyId:
-      clean(row.property_id),
+      clean(
+        row.property_id
+      ),
 
     updateType:
       safeText(
@@ -437,10 +452,13 @@ function contractorPublicRow(row) {
     row.contractors || {};
 
   return {
-    id: clean(row.id),
+    id:
+      clean(row.id),
 
     propertyId:
-      clean(row.property_id),
+      clean(
+        row.property_id
+      ),
 
     workType:
       safeText(
@@ -503,10 +521,13 @@ function contractorPublicRow(row) {
 
 function listingPublicRow(row) {
   return {
-    id: clean(row.id),
+    id:
+      clean(row.id),
 
     propertyId:
-      clean(row.property_id),
+      clean(
+        row.property_id
+      ),
 
     category:
       safeText(
@@ -568,10 +589,13 @@ function listingPublicRow(row) {
 
 function maintenancePublicRow(row) {
   return {
-    id: clean(row.id),
+    id:
+      clean(row.id),
 
     propertyId:
-      clean(row.property_id),
+      clean(
+        row.property_id
+      ),
 
     category:
       safeText(
@@ -625,7 +649,8 @@ function maintenancePublicRow(row) {
 }
 
 function dedupe(rows) {
-  const found = new Map();
+  const found =
+    new Map();
 
   rows.forEach(row => {
     const key =
@@ -661,23 +686,10 @@ function applyCors(
   req,
   res
 ) {
-  const origin =
-    clean(req.headers.origin);
-
-  if (
-    origin &&
-    ALLOWED_ORIGINS.has(origin)
-  ) {
-    res.setHeader(
-      "Access-Control-Allow-Origin",
-      origin
-    );
-
-    res.setHeader(
-      "Vary",
-      "Origin"
-    );
-  }
+  res.setHeader(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
 
   res.setHeader(
     "Access-Control-Allow-Methods",
@@ -686,7 +698,7 @@ function applyCors(
 
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type"
+    "Content-Type, Accept"
   );
 }
 
@@ -694,7 +706,10 @@ export default async function handler(
   req,
   res
 ) {
-  applyCors(req, res);
+  applyCors(
+    req,
+    res
+  );
 
   res.setHeader(
     "Cache-Control",
@@ -706,13 +721,19 @@ export default async function handler(
     "nosniff"
   );
 
-  if (req.method === "OPTIONS") {
+  if (
+    req.method ===
+    "OPTIONS"
+  ) {
     return res
       .status(204)
       .end();
   }
 
-  if (req.method !== "GET") {
+  if (
+    req.method !==
+    "GET"
+  ) {
     res.setHeader(
       "Allow",
       "GET, OPTIONS"
@@ -749,7 +770,9 @@ export default async function handler(
       );
 
     const address =
-      clean(req.query.address);
+      clean(
+        req.query.address
+      );
 
     if (
       !propertyId &&
@@ -1034,9 +1057,15 @@ export default async function handler(
     );
 
     const status =
-      Number(error?.status) >= 400 &&
-      Number(error?.status) < 600
-        ? Number(error.status)
+      Number(
+        error?.status
+      ) >= 400 &&
+      Number(
+        error?.status
+      ) < 600
+        ? Number(
+            error.status
+          )
         : 500;
 
     return res
