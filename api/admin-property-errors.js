@@ -1,420 +1,622 @@
 // api/admin-property-errors.js
-// BlueVera Admin API for property error reports.
-//
-// Supports:
-//   GET  ?action=list
-//   GET  ?action=load&id=<error uuid>
-//   POST { action:"update", errorId, status, adminNotes }
-//
-// Required Vercel environment variables:
-//   SUPABASE_URL
-//   SUPABASE_SERVICE_ROLE_KEY
+// BlueVera Current Errors Admin API
 
-const { createClient } = require("@supabase/supabase-js");
+const SUPABASE_URL = String(
+  process.env.SUPABASE_URL || ""
+).replace(/\/+$/, "");
 
-const SUPABASE_URL =
-  process.env.SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-const SERVICE_ROLE_KEY =
+const SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SERVICE_KEY;
+  process.env.SUPABASE_SECRET_KEY ||
+  "";
 
-if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.");
+const ANON_KEY =
+  process.env.SUPABASE_ANON_KEY ||
+  "";
+
+
+/* =========================================================
+   HELPERS
+   ========================================================= */
+
+function clean(value) {
+  return String(value ?? "").trim();
 }
-
-const supabase = createClient(
-  SUPABASE_URL || "",
-  SERVICE_ROLE_KEY || "",
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false
-    }
-  }
-);
 
 function send(res, status, body) {
-  res.status(status).json(body);
+  return res
+    .status(status)
+    .json(body);
 }
 
-function bearerToken(req) {
-  const header = String(req.headers.authorization || "");
 
-  if (!header.toLowerCase().startsWith("bearer ")) {
-    return "";
+/* =========================================================
+   SUPABASE REST REQUEST
+   ========================================================= */
+
+async function rest(
+  path,
+  options = {}
+) {
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/${path}`,
+    {
+      ...options,
+
+      headers: {
+        apikey:
+          SERVICE_KEY,
+
+        Authorization:
+          `Bearer ${SERVICE_KEY}`,
+
+        "Content-Type":
+          "application/json",
+
+        ...(options.headers || {})
+      }
+    }
+  );
+
+  const text =
+    await response.text();
+
+  let data = null;
+
+  try {
+    data =
+      text
+        ? JSON.parse(text)
+        : null;
+  } catch {
+    data = text;
   }
 
-  return header.slice(7).trim();
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+      data?.error ||
+      data?.hint ||
+      text ||
+      `Supabase request failed (${response.status}).`
+    );
+  }
+
+  return data;
 }
 
-async function requireAuthenticatedUser(req) {
-  const token = bearerToken(req);
+
+/* =========================================================
+   VERIFY ADMIN
+   Matches BlueVera's existing admin-property-rating API
+   ========================================================= */
+
+async function verifyAdmin(req) {
+  const token = clean(
+    req.headers.authorization
+  ).replace(
+    /^Bearer\s+/i,
+    ""
+  );
 
   if (!token) {
-    throw Object.assign(
-      new Error("Missing authorization token."),
-      { statusCode: 401 }
+    throw new Error(
+      "Admin authentication token is missing."
     );
   }
 
-  const { data, error } = await supabase.auth.getUser(token);
+  const response = await fetch(
+    `${SUPABASE_URL}/auth/v1/user`,
+    {
+      headers: {
+        apikey:
+          ANON_KEY,
 
-  if (error || !data?.user) {
-    throw Object.assign(
-      new Error("Invalid or expired admin session."),
-      { statusCode: 401 }
-    );
-  }
-
-  return data.user;
-}
-
-async function requireAdmin(user) {
-  if (!user?.id) {
-    throw Object.assign(
-      new Error("Admin user could not be identified."),
-      { statusCode: 401 }
-    );
-  }
-
-  const candidateQueries = [
-    { column: "auth_user_id", value: user.id },
-    { column: "user_id", value: user.id },
-    { column: "id", value: user.id },
-    { column: "email", value: user.email || "" }
-  ];
-
-  let tableMissing = false;
-
-  for (const query of candidateQueries) {
-    if (!query.value) continue;
-
-    const { data, error } = await supabase
-      .from("admin_users")
-      .select("*")
-      .eq(query.column, query.value)
-      .limit(1);
-
-    if (!error && Array.isArray(data) && data.length > 0) {
-      const row = data[0];
-
-      if (
-        row.active === false ||
-        row.is_active === false ||
-        String(row.status || "").toLowerCase() === "disabled"
-      ) {
-        throw Object.assign(
-          new Error("This admin account is disabled."),
-          { statusCode: 403 }
-        );
+        Authorization:
+          `Bearer ${token}`
       }
-
-      return row;
     }
-
-    if (error?.code === "42P01") {
-      tableMissing = true;
-      break;
-    }
-
-    if (error && error.code !== "42703") {
-      console.error("Admin lookup error:", error);
-    }
-  }
-
-  if (tableMissing) {
-    throw Object.assign(
-      new Error("Admin authorization table is not available."),
-      { statusCode: 500 }
-    );
-  }
-
-  throw Object.assign(
-    new Error("You do not have permission to use this admin tool."),
-    { statusCode: 403 }
   );
-}
 
-function cleanStatus(value) {
-  const status = String(value || "").trim().toLowerCase();
+  const user =
+    await response
+      .json()
+      .catch(() => null);
 
-  if (!["open", "reviewing", "resolved"].includes(status)) {
-    throw Object.assign(
-      new Error("Status must be open, reviewing, or resolved."),
-      { statusCode: 400 }
+  if (
+    !response.ok ||
+    !user?.id
+  ) {
+    throw new Error(
+      "The admin login session is invalid or expired."
     );
   }
 
-  return status;
-}
+  const admins = await rest(
+    "admin_users?select=*",
+    {
+      method: "GET"
+    }
+  );
 
-function cleanNotes(value) {
-  const notes = String(value ?? "").trim();
+  const email =
+    clean(
+      user.email
+    ).toLowerCase();
 
-  if (notes.length > 5000) {
-    throw Object.assign(
-      new Error("Admin notes must be 5,000 characters or fewer."),
-      { statusCode: 400 }
+  const admin = (
+    Array.isArray(admins)
+      ? admins
+      : []
+  ).find(row => {
+    const ids = [
+      row.id,
+      row.auth_user_id,
+      row.user_id
+    ].map(clean);
+
+    const emails = [
+      row.email,
+      row.admin_email,
+      row.username
+    ].map(value =>
+      clean(value)
+        .toLowerCase()
     );
-  }
 
-  return notes || null;
-}
-
-async function listErrors(req, res) {
-  const { data, error } = await supabase
-    .from("property_error_reports")
-    .select(`
-      id,
-      property_id,
-      property_address,
-      reported_by_user_id,
-      reported_by_name,
-      reported_by_email,
-      error_category,
-      error_description,
-      status,
-      admin_notes,
-      created_at,
-      reviewed_at,
-      resolved_at,
-      updated_at
-    `)
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error("List property errors failed:", error);
-
-    return send(res, 500, {
-      success: false,
-      error: "Unable to load property error reports."
-    });
-  }
-
-  return send(res, 200, {
-    success: true,
-    errors: data || []
+    return (
+      ids.includes(user.id) ||
+      (
+        email &&
+        emails.includes(email)
+      )
+    );
   });
+
+  if (!admin) {
+    throw new Error(
+      "This authenticated account is not authorized as a BlueVera admin."
+    );
+  }
+
+  const status = clean(
+    admin.status ||
+    admin.account_status ||
+    "active"
+  ).toLowerCase();
+
+  if (
+    [
+      "disabled",
+      "inactive",
+      "suspended",
+      "denied"
+    ].includes(status)
+  ) {
+    throw new Error(
+      "This BlueVera admin account is not active."
+    );
+  }
+
+  return {
+    user,
+    admin
+  };
 }
 
-async function loadError(req, res) {
-  const id = String(req.query.id || "").trim();
+
+/* =========================================================
+   LIST ERROR REPORTS
+   ========================================================= */
+
+async function listErrors() {
+  const rows = await rest(
+    "property_error_reports" +
+    "?select=*" +
+    "&order=created_at.desc",
+    {
+      method: "GET"
+    }
+  );
+
+  return Array.isArray(rows)
+    ? rows
+    : [];
+}
+
+
+/* =========================================================
+   LOAD ONE ERROR
+   ========================================================= */
+
+async function loadError(
+  errorId
+) {
+  const id =
+    clean(errorId);
 
   if (!id) {
-    return send(res, 400, {
-      success: false,
-      error: "Error report ID is required."
-    });
+    throw new Error(
+      "An error report ID is required."
+    );
   }
 
-  const { data, error } = await supabase
-    .from("property_error_reports")
-    .select(`
-      id,
-      property_id,
-      property_address,
-      reported_by_user_id,
-      reported_by_name,
-      reported_by_email,
-      error_category,
-      error_description,
-      status,
-      admin_notes,
-      created_at,
-      reviewed_at,
-      resolved_at,
-      updated_at
-    `)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Load property error failed:", error);
-
-    return send(res, 500, {
-      success: false,
-      error: "Unable to load this property error report."
-    });
-  }
-
-  if (!data) {
-    return send(res, 404, {
-      success: false,
-      error: "Property error report not found."
-    });
-  }
-
-  return send(res, 200, {
-    success: true,
-    error_report: data
-  });
-}
-
-async function updateError(req, res, adminUser) {
-  const body = req.body || {};
-
-  const errorId = String(body.errorId || "").trim();
-  const status = cleanStatus(body.status);
-  const adminNotes = cleanNotes(body.adminNotes);
-
-  if (!errorId) {
-    return send(res, 400, {
-      success: false,
-      error: "Error report ID is required."
-    });
-  }
-
-  const now = new Date().toISOString();
-
-  const update = {
-    status,
-    admin_notes: adminNotes,
-    updated_at: now
-  };
-
-  if (status === "reviewing") {
-    update.reviewed_at = now;
-    update.resolved_at = null;
-  }
-
-  if (status === "resolved") {
-    update.reviewed_at = now;
-    update.resolved_at = now;
-  }
-
-  if (status === "open") {
-    update.resolved_at = null;
-  }
-
-  const { data, error } = await supabase
-    .from("property_error_reports")
-    .update(update)
-    .eq("id", errorId)
-    .select(`
-      id,
-      property_id,
-      property_address,
-      reported_by_user_id,
-      reported_by_name,
-      reported_by_email,
-      error_category,
-      error_description,
-      status,
-      admin_notes,
-      created_at,
-      reviewed_at,
-      resolved_at,
-      updated_at
-    `)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Update property error failed:", error);
-
-    return send(res, 500, {
-      success: false,
-      error: "Unable to update this property error report."
-    });
-  }
-
-  if (!data) {
-    return send(res, 404, {
-      success: false,
-      error: "Property error report not found."
-    });
-  }
-
-  console.log(
-    "Property error updated",
-    errorId,
-    "by",
-    adminUser?.email || adminUser?.id || "admin",
-    "to",
-    status
+  const rows = await rest(
+    "property_error_reports" +
+    `?id=eq.${encodeURIComponent(id)}` +
+    "&select=*",
+    {
+      method: "GET"
+    }
   );
 
-  return send(res, 200, {
-    success: true,
-    error_report: data
-  });
+  const report =
+    Array.isArray(rows)
+      ? rows[0]
+      : null;
+
+  if (!report) {
+    throw new Error(
+      "Property error report not found."
+    );
+  }
+
+  return report;
 }
 
-module.exports = async function handler(req, res) {
+
+/* =========================================================
+   UPDATE ERROR
+   ========================================================= */
+
+async function updateError(
+  errorId,
+  nextStatus,
+  adminNotes
+) {
+  const id =
+    clean(errorId);
+
+  if (!id) {
+    throw new Error(
+      "An error report ID is required."
+    );
+  }
+
+  const status =
+    clean(nextStatus)
+      .toLowerCase();
+
+  if (
+    ![
+      "open",
+      "reviewing",
+      "resolved"
+    ].includes(status)
+  ) {
+    throw new Error(
+      "Status must be open, reviewing, or resolved."
+    );
+  }
+
+  const notes =
+    clean(adminNotes);
+
+  if (
+    notes.length > 5000
+  ) {
+    throw new Error(
+      "Admin notes must be 5,000 characters or fewer."
+    );
+  }
+
+  const now =
+    new Date()
+      .toISOString();
+
+  const payload = {
+    status,
+    admin_notes:
+      notes || null,
+
+    updated_at:
+      now
+  };
+
+  if (
+    status ===
+    "reviewing"
+  ) {
+    payload.reviewed_at =
+      now;
+
+    payload.resolved_at =
+      null;
+  }
+
+  if (
+    status ===
+    "resolved"
+  ) {
+    payload.reviewed_at =
+      now;
+
+    payload.resolved_at =
+      now;
+  }
+
+  if (
+    status ===
+    "open"
+  ) {
+    payload.resolved_at =
+      null;
+  }
+
+  const rows = await rest(
+    "property_error_reports" +
+    `?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+
+      headers: {
+        Prefer:
+          "return=representation"
+      },
+
+      body:
+        JSON.stringify(
+          payload
+        )
+    }
+  );
+
+  const report =
+    Array.isArray(rows)
+      ? rows[0]
+      : rows;
+
+  if (!report) {
+    throw new Error(
+      "Property error report not found."
+    );
+  }
+
+  return report;
+}
+
+
+/* =========================================================
+   API HANDLER
+   ========================================================= */
+
+export default async function handler(
+  req,
+  res
+) {
+  res.setHeader(
+    "Content-Type",
+    "application/json"
+  );
+
+  res.setHeader(
+    "Cache-Control",
+    "no-store, max-age=0"
+  );
+
+  if (
+    !SUPABASE_URL ||
+    !SERVICE_KEY ||
+    !ANON_KEY
+  ) {
+    return send(
+      res,
+      500,
+      {
+        success: false,
+
+        error:
+          "Supabase server environment variables are not configured."
+      }
+    );
+  }
+
   try {
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-      return send(res, 500, {
-        success: false,
-        error: "Server configuration is missing Supabase credentials."
-      });
-    }
+    const adminContext =
+      await verifyAdmin(req);
 
-    if (!["GET", "POST"].includes(req.method)) {
-      res.setHeader("Allow", "GET, POST");
 
-      return send(res, 405, {
-        success: false,
-        error: "Method not allowed."
-      });
-    }
+    /* =====================================================
+       GET
+       ===================================================== */
 
-    const user = await requireAuthenticatedUser(req);
+    if (
+      req.method ===
+      "GET"
+    ) {
+      const action =
+        clean(
+          req.query.action ||
+          "list"
+        ).toLowerCase();
 
-    await requireAdmin(user);
 
-    if (req.method === "GET") {
-      const action = String(
-        req.query.action || "list"
-      ).toLowerCase();
+      /* List errors */
 
-      if (action === "list") {
-        return await listErrors(req, res);
-      }
+      if (
+        action ===
+        "list"
+      ) {
+        const errors =
+          await listErrors();
 
-      if (action === "load") {
-        return await loadError(req, res);
-      }
-
-      return send(res, 400, {
-        success: false,
-        error: "Unknown GET action."
-      });
-    }
-
-    if (req.method === "POST") {
-      const action = String(
-        req.body?.action || ""
-      ).toLowerCase();
-
-      if (action === "update") {
-        return await updateError(
-          req,
+        return send(
           res,
-          user
+          200,
+          {
+            success: true,
+            errors
+          }
         );
       }
 
-      return send(res, 400, {
-        success: false,
-        error: "Unknown POST action."
-      });
+
+      /* Load one error */
+
+      if (
+        action ===
+        "load"
+      ) {
+        const errorReport =
+          await loadError(
+            req.query.id
+          );
+
+        return send(
+          res,
+          200,
+          {
+            success: true,
+
+            error_report:
+              errorReport
+          }
+        );
+      }
+
+
+      return send(
+        res,
+        400,
+        {
+          success: false,
+
+          error:
+            "Unknown property error action."
+        }
+      );
     }
+
+
+    /* =====================================================
+       POST
+       ===================================================== */
+
+    if (
+      req.method ===
+      "POST"
+    ) {
+      const body =
+        typeof req.body ===
+        "string"
+          ? JSON.parse(
+              req.body
+            )
+          : req.body || {};
+
+      const action =
+        clean(
+          body.action
+        ).toLowerCase();
+
+
+      /* Update error */
+
+      if (
+        action ===
+        "update"
+      ) {
+        const errorReport =
+          await updateError(
+            body.errorId ||
+            body.error_id,
+
+            body.status,
+
+            body.adminNotes ||
+            body.admin_notes
+          );
+
+        console.log(
+          "Property error updated",
+          errorReport?.id,
+          "by",
+          adminContext.user.email ||
+          adminContext.user.id,
+          "to",
+          errorReport?.status
+        );
+
+        return send(
+          res,
+          200,
+          {
+            success: true,
+
+            error_report:
+              errorReport
+          }
+        );
+      }
+
+
+      return send(
+        res,
+        400,
+        {
+          success: false,
+
+          error:
+            "Unknown property error action."
+        }
+      );
+    }
+
+
+    /* =====================================================
+       UNSUPPORTED METHOD
+       ===================================================== */
+
+    res.setHeader(
+      "Allow",
+      "GET, POST"
+    );
+
+    return send(
+      res,
+      405,
+      {
+        success: false,
+
+        error:
+          "Method not allowed."
+      }
+    );
+
   } catch (error) {
     console.error(
       "admin-property-errors API error:",
       error
     );
 
+    const message =
+      error?.message ||
+      "The property error request failed.";
+
+    const status =
+      /authentication|session|authorized|admin account/i
+        .test(message)
+        ? 401
+        : 500;
+
     return send(
       res,
-      Number(error.statusCode) || 500,
+      status,
       {
         success: false,
         error:
-          error.message ||
-          "The property error request failed."
+          message
       }
     );
   }
-};
+}
