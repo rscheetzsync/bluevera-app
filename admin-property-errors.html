@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Current Errors | BlueVera Admin</title>
+
+  <style>
+    :root {
+      --navy: #082f63;
+      --blue: #0a7ff2;
+      --blue-dark: #0754ad;
+      --page: #eef4fb;
+      --card: #ffffff;
+      --text: #13233f;
+      --muted: #617089;
+      --border: #d6e2f0;
+      --danger: #c93f3f;
+      --green: #18794e;
+      --yellow: #9a6700;
+      --shadow: 0 14px 34px rgba(18, 54, 94, 0.10);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--page);
+      color: var(--text);
+    }
+
+    .topbar {
+      min-height: 76px;
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      color: var(--navy);
+      letter-spacing: .4px;
+      white-space: nowrap;
+    }
+
+    .logo-mark {
+      color: var(--blue);
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .title-wrap h1 {
+      margin: 0;
+      font-size: 22px;
+      color: var(--navy);
+    }
+
+    .title-wrap p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 11px 16px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      background: #fff;
+      color: var(--navy);
+    }
+
+    .btn-primary {
+      background: var(--blue-dark);
+      border-color: var(--blue-dark);
+      color: #fff;
+    }
+
+    .btn-danger {
+      color: var(--danger);
+      border-color: #efc0c0;
+      background: #fff7f7;
+    }
+
+    .btn-warning {
+      color: #755100;
+      border-color: #ead39b;
+      background: #fff8e6;
+    }
+
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 34px 24px 52px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, var(--navy), #0b5da9);
+      color: #fff;
+      border-radius: 18px;
+      padding: 28px 30px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .hero h2 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+
+    .hero p {
+      margin: 0;
+      color: #dcecff;
+      line-height: 1.5;
+    }
+
+    .hero-counts {
+      display: flex;
+      align-items: stretch;
+      gap: 12px;
+      flex: 0 0 auto;
+    }
+
+    .summary-box {
+      min-width: 126px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.14);
+      border: 1px solid rgba(255,255,255,.35);
+      padding: 12px 16px;
+      text-align: center;
+    }
+
+    .summary-box span {
+      display: block;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: #dcecff;
+      margin-bottom: 4px;
+    }
+
+    .summary-box strong {
+      display: block;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 900;
+      color: #fff;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 8px 24px rgba(17,56,98,.06);
+      margin-bottom: 18px;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .toolbar h3 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 20px;
+    }
+
+    .toolbar p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    select {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px;
+      border-bottom: 1px solid #e9eef5;
+      font-size: 13px;
+      vertical-align: middle;
+    }
+
+    th {
+      background: #f4f8fd;
+      color: var(--navy);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    tbody tr {
+      cursor: pointer;
+    }
+
+    tbody tr:hover td {
+      background: #f8fbff;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+      border: 1px solid var(--border);
+    }
+
+    .status-open {
+      color: var(--danger);
+      background: #fff0f0;
+      border-color: #efc0c0;
+    }
+
+    .status-reviewing {
+      color: var(--yellow);
+      background: #fff8e6;
+      border-color: #ead39b;
+    }
+
+    .status-resolved {
+      color: var(--green);
+      background: #eaf8f0;
+      border-color: #b9e2ca;
+    }
+
+    .hidden { display: none !important; }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .detail-box {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .detail-box label {
+      display: block;
+      font-size: 10px;
+      font-weight: 900;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .detail-box strong {
+      color: var(--navy);
+    }
+
+    .description {
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 100px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 34px 15px;
+      color: var(--muted);
+    }
+
+    .message {
+      display: none;
+      margin-bottom: 14px;
+      border-radius: 10px;
+      padding: 11px 13px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .message.show { display: block; }
+    .message.ok {
+      background: #eaf8f0;
+      color: var(--green);
+      border: 1px solid #b9e2ca;
+    }
+    .message.err {
+      background: #fff0f0;
+      color: var(--danger);
+      border: 1px solid #efc0c0;
+    }
+
+    @media (max-width: 700px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 16px;
+      }
+
+      .top-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      main {
+        padding: 24px 14px 40px;
+      }
+
+      .hero {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .hero-counts {
+        width: 100%;
+      }
+
+      .summary-box {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">
+        <span class="logo-mark">✓</span>
+        <span>BLUEVERA</span>
+      </div>
+
+      <div class="title-wrap">
+        <h1>Current Errors</h1>
+        <p>Agent-reported property issues</p>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <a class="btn" href="admin-dashboard.html">Admin Dashboard</a>
+      <a class="btn" href="property-rating-manager.html">Property Rating Manager</a>
+      <button class="btn btn-danger" id="logoutBtn" type="button">Log Out</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h2>Property Error Review</h2>
+        <p>
+          Review errors submitted by agents, open the affected property,
+          add internal notes, and track each issue until it is resolved.
+        </p>
+      </div>
+      <div class="hero-counts">
+        <div class="summary-box">
+          <span>Current Errors</span>
+          <strong id="openCount">0</strong>
+        </div>
+        <div class="summary-box">
+          <span>Resolved History</span>
+          <strong id="resolvedCount">0</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <div>
+          <h3>Reported Errors</h3>
+          <p>Click any row to review the full report.</p>
+        </div>
+
+        <div class="filters">
+          <select id="statusFilter">
+            <option value="current">Current Errors</option>
+            <option value="open">Open Only</option>
+            <option value="reviewing">Reviewing Only</option>
+            <option value="resolved">Resolved History</option>
+            <option value="all">All Errors</option>
+          </select>
+
+          <button class="btn" id="refreshBtn" type="button">Refresh</button>
+        </div>
+      </div>
+
+      <div id="listMessage" class="message"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Error Item</th>
+              <th>Agent</th>
+              <th>Reported</th>
+              <th>Resolved</th>
+              <th>Status</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody id="errorsBody">
+            <tr>
+              <td colspan="7" class="empty">Loading current errors...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card hidden" id="detailCard">
+      <div class="toolbar">
+        <div>
+          <h3>Error Report</h3>
+          <p id="detailProperty">—</p>
+        </div>
+        <button class="btn" id="closeDetailBtn" type="button">Close</button>
+      </div>
+
+      <div id="detailMessage" class="message"></div>
+
+      <div class="detail-grid">
+        <div class="detail-box">
+          <label>Error Item</label>
+          <strong id="detailCategory">—</strong>
+        </div>
+
+        <div class="detail-box">
+          <label>Status</label>
+          <span class="status-pill status-open" id="detailStatus">Open</span>
+        </div>
+
+        <div class="detail-box">
+          <label>Reported By</label>
+          <strong id="detailAgent">—</strong>
+        </div>
+
+        <div class="detail-box">
+          <label>Reported</label>
+          <strong id="detailDate">—</strong>
+        </div>
+
+        <div class="detail-box">
+          <label>Resolved</label>
+          <strong id="detailResolvedDate">—</strong>
+        </div>
+      </div>
+
+      <div class="detail-box" style="margin-bottom:14px;">
+        <label>Agent Description</label>
+        <div class="description" id="detailDescription">—</div>
+      </div>
+
+      <div class="detail-box">
+        <label for="adminNotes">Admin Notes</label>
+        <textarea
+          id="adminNotes"
+          placeholder="Enter what was checked, corrected, or still needs review."
+        ></textarea>
+      </div>
+
+      <div class="detail-actions">
+        <button class="btn btn-primary" id="openPropertyBtn" type="button">
+          Open Property Record
+        </button>
+        <button class="btn" id="markOpenBtn" type="button">Mark Open</button>
+        <button class="btn btn-warning" id="markReviewingBtn" type="button">
+          Mark Reviewing
+        </button>
+        <button class="btn" id="markResolvedBtn" type="button">
+          Mark Resolved
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API_URL = "/api/admin-property-errors";
+
+    let currentErrors = [];
+    let activeError = null;
+
+    const $ = id => document.getElementById(id);
+
+    function accessToken() {
+      return (
+        localStorage.getItem("blueveraAdminAccessToken") ||
+        localStorage.getItem("supabaseAccessToken") ||
+        localStorage.getItem("blueveraSupabaseAccessToken") ||
+        ""
+      );
+    }
+
+    function authHeaders() {
+      const token = accessToken();
+
+      if (!token) {
+        throw new Error("Admin authentication token is missing. Log out and sign in again.");
+      }
+
+      return {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      };
+    }
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    function showMessage(id, message, type) {
+      const el = $(id);
+      el.textContent = message;
+      el.className = `message show ${type === "ok" ? "ok" : "err"}`;
+    }
+
+    function clearMessage(id) {
+      const el = $(id);
+      el.textContent = "";
+      el.className = "message";
+    }
+
+    async function api(path = "", options = {}) {
+      const response = await fetch(API_URL + path, {
+        ...options,
+        headers: {
+          ...authHeaders(),
+          ...(options.headers || {})
+        }
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || result.success === false) {
+        throw new Error(result.error || "The property error request failed.");
+      }
+
+      return result;
+    }
+
+    function formatDate(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString();
+    }
+
+    function normalizeStatus(value) {
+      const status = String(value || "open").toLowerCase();
+      if (status === "reviewing") return "reviewing";
+      if (status === "resolved") return "resolved";
+      return "open";
+    }
+
+    function statusClass(value) {
+      const status = normalizeStatus(value);
+      if (status === "reviewing") return "status-reviewing";
+      if (status === "resolved") return "status-resolved";
+      return "status-open";
+    }
+
+    function updateOpenCount() {
+      const currentCount = currentErrors.filter(
+        item => normalizeStatus(item.status) !== "resolved"
+      ).length;
+
+      const resolvedCount = currentErrors.filter(
+        item => normalizeStatus(item.status) === "resolved"
+      ).length;
+
+      $("openCount").textContent = currentCount;
+      $("resolvedCount").textContent = resolvedCount;
+    }
+
+    function filteredErrors() {
+      const filter = $("statusFilter").value;
+
+      if (filter === "all") return currentErrors;
+      if (filter === "current") {
+        return currentErrors.filter(item => normalizeStatus(item.status) !== "resolved");
+      }
+
+      return currentErrors.filter(item => normalizeStatus(item.status) === filter);
+    }
+
+    function renderErrors() {
+      const errors = filteredErrors();
+      const body = $("errorsBody");
+
+      updateOpenCount();
+
+      if (!errors.length) {
+        body.innerHTML = `
+          <tr>
+            <td colspan="7" class="empty">No errors match this view.</td>
+          </tr>
+        `;
+        return;
+      }
+
+      body.innerHTML = errors.map(item => {
+        const address =
+          item.property_address ||
+          item.full_address ||
+          item.address ||
+          "Property";
+
+        const category =
+          item.error_category ||
+          item.error_item ||
+          item.category ||
+          "Other";
+
+        const agent =
+          item.reported_by_name ||
+          item.agent_name ||
+          item.reported_by_email ||
+          item.agent_email ||
+          "Agent";
+
+        const status = normalizeStatus(item.status);
+
+        return `
+          <tr data-error-id="${esc(item.id)}">
+            <td><strong>${esc(address)}</strong></td>
+            <td>${esc(category)}</td>
+            <td>${esc(agent)}</td>
+            <td>${esc(formatDate(item.created_at || item.reported_at))}</td>
+            <td>${status === "resolved" ? esc(formatDate(item.resolved_at)) : "—"}</td>
+            <td>
+              <span class="status-pill ${statusClass(status)}">
+                ${esc(status)}
+              </span>
+            </td>
+            <td>
+              <button class="btn" type="button" data-review-id="${esc(item.id)}">
+                View Error
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      body.querySelectorAll("tr[data-error-id]").forEach(row => {
+        row.addEventListener("click", event => {
+          if (event.target.closest("button")) return;
+          openError(row.dataset.errorId);
+        });
+      });
+
+      body.querySelectorAll("[data-review-id]").forEach(button => {
+        button.addEventListener("click", () => openError(button.dataset.reviewId));
+      });
+    }
+
+    async function loadErrors() {
+      clearMessage("listMessage");
+
+      $("refreshBtn").disabled = true;
+      $("refreshBtn").textContent = "Loading...";
+
+      try {
+        const result = await api("?action=list");
+        currentErrors = result.errors || result.error_reports || [];
+        renderErrors();
+      } catch (error) {
+        currentErrors = [];
+        renderErrors();
+        showMessage("listMessage", error.message, "err");
+      } finally {
+        $("refreshBtn").disabled = false;
+        $("refreshBtn").textContent = "Refresh";
+      }
+    }
+
+    function fillDetail(error) {
+      activeError = error;
+
+      const address =
+        error.property_address ||
+        error.full_address ||
+        error.address ||
+        "Property";
+
+      const category =
+        error.error_category ||
+        error.error_item ||
+        error.category ||
+        "Other";
+
+      const agent =
+        error.reported_by_name ||
+        error.agent_name ||
+        error.reported_by_email ||
+        error.agent_email ||
+        "Agent";
+
+      const status = normalizeStatus(error.status);
+
+      $("detailProperty").textContent = address;
+      $("detailCategory").textContent = category;
+      $("detailAgent").textContent = agent;
+      $("detailDate").textContent = formatDate(error.created_at || error.reported_at);
+      $("detailResolvedDate").textContent =
+        normalizeStatus(error.status) === "resolved"
+          ? formatDate(error.resolved_at)
+          : "—";
+      $("detailDescription").textContent =
+        error.error_description ||
+        error.description ||
+        "No description was provided.";
+
+      $("adminNotes").value = error.admin_notes || "";
+
+      $("detailStatus").textContent = status;
+      $("detailStatus").className = `status-pill ${statusClass(status)}`;
+
+      $("openPropertyBtn").disabled = !error.property_id;
+
+      $("detailCard").classList.remove("hidden");
+      clearMessage("detailMessage");
+
+      window.scrollTo({
+        top: $("detailCard").offsetTop - 90,
+        behavior: "smooth"
+      });
+    }
+
+    async function openError(id) {
+      const existing = currentErrors.find(item => String(item.id) === String(id));
+
+      if (existing) {
+        fillDetail(existing);
+        return;
+      }
+
+      try {
+        const result = await api(`?action=load&id=${encodeURIComponent(id)}`);
+        fillDetail(result.error || result.error_report || result);
+      } catch (error) {
+        showMessage("listMessage", error.message, "err");
+      }
+    }
+
+    async function updateStatus(nextStatus) {
+      if (!activeError || !activeError.id) return;
+
+      clearMessage("detailMessage");
+
+      try {
+        const result = await api("", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "update",
+            errorId: activeError.id,
+            status: nextStatus,
+            adminNotes: $("adminNotes").value.trim()
+          })
+        });
+
+        const updated =
+          result.error ||
+          result.error_report ||
+          {
+            ...activeError,
+            status: nextStatus,
+            admin_notes: $("adminNotes").value.trim()
+          };
+
+        const index = currentErrors.findIndex(
+          item => String(item.id) === String(activeError.id)
+        );
+
+        if (index >= 0) {
+          currentErrors[index] = {
+            ...currentErrors[index],
+            ...updated
+          };
+        }
+
+        fillDetail({
+          ...activeError,
+          ...updated
+        });
+
+        renderErrors();
+
+        showMessage(
+          "detailMessage",
+          `Error marked ${nextStatus}.`,
+          "ok"
+        );
+      } catch (error) {
+        showMessage("detailMessage", error.message, "err");
+      }
+    }
+
+    $("statusFilter").addEventListener("change", renderErrors);
+    $("refreshBtn").addEventListener("click", loadErrors);
+
+    $("closeDetailBtn").addEventListener("click", () => {
+      $("detailCard").classList.add("hidden");
+      activeError = null;
+    });
+
+    $("openPropertyBtn").addEventListener("click", () => {
+      if (!activeError || !activeError.property_id) return;
+
+      window.location.href =
+        `property-rating-manager.html?propertyId=${encodeURIComponent(activeError.property_id)}`;
+    });
+
+    $("markOpenBtn").addEventListener("click", () => updateStatus("open"));
+    $("markReviewingBtn").addEventListener("click", () => updateStatus("reviewing"));
+    $("markResolvedBtn").addEventListener("click", () => updateStatus("resolved"));
+
+    $("logoutBtn").addEventListener("click", () => {
+      localStorage.removeItem("blueveraAdminAccessToken");
+      localStorage.removeItem("supabaseAccessToken");
+      localStorage.removeItem("blueveraSupabaseAccessToken");
+      localStorage.removeItem("bluevera_admin_logged_in");
+      sessionStorage.clear();
+      window.location.href = "index.html";
+    });
+
+    if (!accessToken()) {
+      showMessage(
+        "listMessage",
+        "Admin login token is missing. Log out and sign in again.",
+        "err"
+      );
+
+      $("errorsBody").innerHTML = `
+        <tr>
+          <td colspan="7" class="empty">Admin authentication is required.</td>
+        </tr>
+      `;
+    } else {
+      loadErrors();
+    }
+  </script>
+</body>
+</html>
