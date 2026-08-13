@@ -1,16 +1,5 @@
 // api/agent-property-errors.js
 // BlueVera Agent Property Error Submission API
-//
-// POST:
-// {
-//   action: "create",
-//   propertyId,
-//   propertyAddress,
-//   errorCategory,
-//   errorDescription,
-//   reportedByName,
-//   reportedByEmail
-// }
 
 const SUPABASE_URL = String(
   process.env.SUPABASE_URL || ""
@@ -38,6 +27,50 @@ function send(res, status, body) {
   return res
     .status(status)
     .json(body);
+}
+
+
+/* =========================================================
+   CORS
+   Allows bluevera.org to call bluevera.app API
+   ========================================================= */
+
+function setCors(req, res) {
+  const origin = String(req.headers.origin || "");
+
+  const allowedOrigins = [
+    "https://bluevera.org",
+    "https://www.bluevera.org",
+    "https://bluevera.app",
+    "https://www.bluevera.app"
+  ];
+
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader(
+      "Access-Control-Allow-Origin",
+      origin
+    );
+  }
+
+  res.setHeader(
+    "Vary",
+    "Origin"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "POST, OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
+
+  res.setHeader(
+    "Access-Control-Max-Age",
+    "86400"
+  );
 }
 
 
@@ -116,7 +149,7 @@ async function verifyAgent(req) {
   }
 
 
-  /* Verify the Supabase session */
+  /* Verify Supabase session */
 
   const authResponse = await fetch(
     `${SUPABASE_URL}/auth/v1/user`,
@@ -146,7 +179,7 @@ async function verifyAgent(req) {
   }
 
 
-  /* Load the agent profile tied to this auth user */
+  /* Load matching agent profile */
 
   const rows = await rest(
     "agents" +
@@ -170,7 +203,7 @@ async function verifyAgent(req) {
   }
 
 
-  /* Verify agent account status */
+  /* Check account status */
 
   const status = clean(
     agent.profile_status ||
@@ -233,8 +266,6 @@ async function createErrorReport(
     );
 
 
-  /* Required fields */
-
   if (!propertyAddress) {
     throw new Error(
       "A property address is required."
@@ -264,19 +295,17 @@ async function createErrorReport(
   }
 
 
-  /*
-    Use the authenticated agent profile as the authoritative
-    source for the agent identity.
-
-    We do not trust the name/email sent by the browser when a
-    verified value exists in Supabase.
-  */
-
   const agent =
     agentContext.agent || {};
 
   const user =
     agentContext.user || {};
+
+
+  /*
+    Agent identity comes from authenticated Supabase account,
+    not just from browser-provided text.
+  */
 
   const reportedByName =
     clean(
@@ -298,14 +327,10 @@ async function createErrorReport(
     );
 
 
-  /*
-    The property_error_reports table currently allows
-    property_id to be nullable from the application side.
+  const now =
+    new Date()
+      .toISOString();
 
-    If BlueVera has a central property UUID, save it.
-    Otherwise the address still allows the admin to identify
-    and review the reported property.
-  */
 
   const payload = {
     property_id:
@@ -336,12 +361,10 @@ async function createErrorReport(
       null,
 
     created_at:
-      new Date()
-        .toISOString(),
+      now,
 
     updated_at:
-      new Date()
-        .toISOString()
+      now
   };
 
 
@@ -361,6 +384,7 @@ async function createErrorReport(
         )
     }
   );
+
 
   const report =
     Array.isArray(rows)
@@ -385,6 +409,24 @@ export default async function handler(
   req,
   res
 ) {
+
+  /* CORS MUST happen first */
+
+  setCors(req, res);
+
+
+  /* Browser preflight request */
+
+  if (
+    req.method ===
+    "OPTIONS"
+  ) {
+    return res
+      .status(204)
+      .end();
+  }
+
+
   res.setHeader(
     "Content-Type",
     "application/json"
@@ -396,7 +438,7 @@ export default async function handler(
   );
 
 
-  /* Verify environment */
+  /* Environment check */
 
   if (
     !SUPABASE_URL ||
@@ -416,7 +458,7 @@ export default async function handler(
   }
 
 
-  /* Only POST is required */
+  /* Only POST after OPTIONS */
 
   if (
     req.method !==
@@ -424,7 +466,7 @@ export default async function handler(
   ) {
     res.setHeader(
       "Allow",
-      "POST"
+      "POST, OPTIONS"
     );
 
     return send(
@@ -442,13 +484,9 @@ export default async function handler(
 
   try {
 
-    /* Verify the logged-in agent */
-
     const agentContext =
       await verifyAgent(req);
 
-
-    /* Read body */
 
     const body =
       typeof req.body ===
@@ -465,8 +503,6 @@ export default async function handler(
         "create"
       ).toLowerCase();
 
-
-    /* Create property error */
 
     if (
       action ===
