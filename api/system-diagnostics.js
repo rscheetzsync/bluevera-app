@@ -3,10 +3,13 @@
 //
 // Actions:
 //   GET ?action=health
+//   GET ?action=page&view=desktop
+//   GET ?action=page&view=laptop
+//   GET ?action=page&view=tablet
+//   GET ?action=page&view=mobile
 //   GET ?action=property&address=<property address>
 //
-// This endpoint does not expose environment values or secret keys.
-// It reuses the same admin-authentication pattern as admin-property-errors.js.
+// Restricted internal diagnostics only.
 
 const SUPABASE_URL = String(
   process.env.SUPABASE_URL || ""
@@ -27,11 +30,15 @@ const PUBLIC_SITE_URL = String(
 ).replace(/\/+$/, "");
 
 function clean(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function send(res, status, body) {
-  return res.status(status).json(body);
+  return res
+    .status(status)
+    .json(body);
 }
 
 function normalizeAddress(value) {
@@ -55,41 +62,50 @@ function normalizeAddress(value) {
     .replace(/\bparkway\b/g, "pkwy")
     .replace(/\btrail\b/g, "trl")
     .replace(/\bhighway\b/g, "hwy")
-    .replace(/\b(arizona|az|united states|usa)\b/g, " ")
-    .replace(/\b\d{5}(?:-\d{4})?\b/g, " ")
+    .replace(
+      /\b(arizona|az|united states|usa)\b/g,
+      " "
+    )
+    .replace(
+      /\b\d{5}(?:-\d{4})?\b/g,
+      " "
+    )
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function streetParts(value) {
-  const normalized = normalizeAddress(value);
+  const normalized =
+    normalizeAddress(value);
 
-  const parts = normalized
-    .split(" ")
-    .filter(Boolean);
+  const parts =
+    normalized
+      .split(" ")
+      .filter(Boolean);
 
   const number =
     parts.find(part =>
       /^\d+[a-z]?$/.test(part)
     ) || "";
 
-  const words = parts.filter(part =>
-    !/^\d+[a-z]?$/.test(part) &&
-    ![
-      "phoenix",
-      "scottsdale",
-      "tempe",
-      "mesa",
-      "glendale",
-      "chandler",
-      "gilbert",
-      "peoria",
-      "paradise",
-      "valley",
-      "maricopa",
-      "county"
-    ].includes(part)
-  );
+  const words =
+    parts.filter(part =>
+      !/^\d+[a-z]?$/.test(part) &&
+      ![
+        "phoenix",
+        "scottsdale",
+        "tempe",
+        "mesa",
+        "glendale",
+        "chandler",
+        "gilbert",
+        "peoria",
+        "paradise",
+        "valley",
+        "maricopa",
+        "county"
+      ].includes(part)
+    );
 
   return {
     normalized,
@@ -102,8 +118,11 @@ function addressesMatch(
   searchAddress,
   storedAddress
 ) {
-  const a = streetParts(searchAddress);
-  const b = streetParts(storedAddress);
+  const a =
+    streetParts(searchAddress);
+
+  const b =
+    streetParts(storedAddress);
 
   if (
     !a.number ||
@@ -138,32 +157,35 @@ function addressesMatch(
         a.words.includes(word)
     );
 
-  return shared.length >= 1;
+  return (
+    shared.length >= 1
+  );
 }
 
 async function rest(
   path,
   options = {}
 ) {
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/${path}`,
-    {
-      ...options,
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/${path}`,
+      {
+        ...options,
 
-      headers: {
-        apikey:
-          SERVICE_KEY,
+        headers: {
+          apikey:
+            SERVICE_KEY,
 
-        Authorization:
-          `Bearer ${SERVICE_KEY}`,
+          Authorization:
+            `Bearer ${SERVICE_KEY}`,
 
-        "Content-Type":
-          "application/json",
+          "Content-Type":
+            "application/json",
 
-        ...(options.headers || {})
+          ...(options.headers || {})
+        }
       }
-    }
-  );
+    );
 
   const text =
     await response.text();
@@ -193,12 +215,13 @@ async function rest(
 }
 
 async function verifyAdmin(req) {
-  const token = clean(
-    req.headers.authorization
-  ).replace(
-    /^Bearer\s+/i,
-    ""
-  );
+  const token =
+    clean(
+      req.headers.authorization
+    ).replace(
+      /^Bearer\s+/i,
+      ""
+    );
 
   if (!token) {
     throw new Error(
@@ -206,18 +229,19 @@ async function verifyAdmin(req) {
     );
   }
 
-  const response = await fetch(
-    `${SUPABASE_URL}/auth/v1/user`,
-    {
-      headers: {
-        apikey:
-          ANON_KEY,
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/auth/v1/user`,
+      {
+        headers: {
+          apikey:
+            ANON_KEY,
 
-        Authorization:
-          `Bearer ${token}`
+          Authorization:
+            `Bearer ${token}`
+        }
       }
-    }
-  );
+    );
 
   const user =
     await response
@@ -233,46 +257,49 @@ async function verifyAdmin(req) {
     );
   }
 
-  const admins = await rest(
-    "admin_users?select=*",
-    {
-      method: "GET"
-    }
-  );
+  const admins =
+    await rest(
+      "admin_users?select=*",
+      {
+        method:
+          "GET"
+      }
+    );
 
   const email =
-    clean(user.email)
-      .toLowerCase();
+    clean(
+      user.email
+    ).toLowerCase();
 
-  const admin = (
-    Array.isArray(admins)
-      ? admins
-      : []
-  ).find(row => {
-    const ids = [
-      row.id,
-      row.auth_user_id,
-      row.user_id
-    ].map(clean);
+  const admin =
+    (
+      Array.isArray(admins)
+        ? admins
+        : []
+    ).find(row => {
+      const ids = [
+        row.id,
+        row.auth_user_id,
+        row.user_id
+      ].map(clean);
 
-    const emails = [
-      row.email,
-      row.admin_email,
-      row.username
-    ].map(
-      value =>
+      const emails = [
+        row.email,
+        row.admin_email,
+        row.username
+      ].map(value =>
         clean(value)
           .toLowerCase()
-    );
+      );
 
-    return (
-      ids.includes(user.id) ||
-      (
-        email &&
-        emails.includes(email)
-      )
-    );
-  });
+      return (
+        ids.includes(user.id) ||
+        (
+          email &&
+          emails.includes(email)
+        )
+      );
+    });
 
   if (!admin) {
     throw new Error(
@@ -280,11 +307,12 @@ async function verifyAdmin(req) {
     );
   }
 
-  const status = clean(
-    admin.status ||
-    admin.account_status ||
-    "active"
-  ).toLowerCase();
+  const status =
+    clean(
+      admin.status ||
+      admin.account_status ||
+      "active"
+    ).toLowerCase();
 
   if (
     [
@@ -330,7 +358,7 @@ async function fetchWithTimeout(
           controller.signal,
 
         headers: {
-          "Accept":
+          Accept:
             "application/json,text/plain,*/*",
 
           ...(options.headers || {})
@@ -373,21 +401,32 @@ async function fetchJsonDiagnostic(
     }
 
     return {
-      reachable: true,
+      reachable:
+        true,
+
       ok:
         response.ok,
+
       status:
         response.status,
+
       ms:
         Date.now() -
         started,
+
       data
     };
   } catch (error) {
     return {
-      reachable: false,
-      ok: false,
-      status: 0,
+      reachable:
+        false,
+
+      ok:
+        false,
+
+      status:
+        0,
+
       ms:
         Date.now() -
         started,
@@ -434,11 +473,14 @@ async function probeRoute(
   if (!result.reachable) {
     return check(
       "fail",
+
       result.error ||
-        "Endpoint could not be reached.",
+      "Endpoint could not be reached.",
+
       {
         httpStatus:
           result.status,
+
         responseMs:
           result.ms
       }
@@ -458,6 +500,7 @@ async function probeRoute(
       {
         httpStatus:
           result.status,
+
         responseMs:
           result.ms
       }
@@ -469,10 +512,13 @@ async function probeRoute(
   ) {
     return check(
       "fail",
+
       `Endpoint returned HTTP ${result.status}.`,
+
       {
         httpStatus:
           result.status,
+
         responseMs:
           result.ms
       }
@@ -481,10 +527,13 @@ async function probeRoute(
 
   return check(
     "warn",
+
     `Endpoint returned HTTP ${result.status}.`,
+
     {
       httpStatus:
         result.status,
+
       responseMs:
         result.ms
     }
@@ -522,28 +571,34 @@ async function healthChecks(req) {
     await rest(
       "properties?select=id&limit=1",
       {
-        method: "GET"
+        method:
+          "GET"
       }
     );
 
-    checks.supabase = check(
-      "pass",
+    checks.supabase =
+      check(
+        "pass",
 
-      "Supabase is reachable and the central properties table can be read."
-    );
+        "Supabase is reachable and the central properties table can be read."
+      );
   } catch (error) {
-    checks.supabase = check(
-      "fail",
+    checks.supabase =
+      check(
+        "fail",
 
-      `Supabase/property table check failed: ${clean(error.message)}`
-    );
+        `Supabase/property table check failed: ${clean(
+          error.message
+        )}`
+      );
   }
 
   try {
     await rest(
       "property_current_ratings?select=property_id&limit=1",
       {
-        method: "GET"
+        method:
+          "GET"
       }
     );
 
@@ -558,7 +613,9 @@ async function healthChecks(req) {
       check(
         "fail",
 
-        `Central property hub data check failed: ${clean(error.message)}`
+        `Central property hub data check failed: ${clean(
+          error.message
+        )}`
       );
   }
 
@@ -610,11 +667,6 @@ async function healthChecks(req) {
       ]
     );
 
-  /*
-    Capital Exposure intentionally stays WARNING
-    until BlueVera returns one authoritative
-    exposure value directly from the central API.
-  */
   checks.capital =
     check(
       "warn",
@@ -625,30 +677,438 @@ async function healthChecks(req) {
   return checks;
 }
 
+const PAGE_DIAGNOSTIC_VIEWS = {
+  desktop: {
+    file:
+      "map.html",
+
+    label:
+      "Desktop Map"
+  },
+
+  laptop: {
+    file:
+      "map-laptop.html",
+
+    label:
+      "Laptop Map"
+  },
+
+  tablet: {
+    file:
+      "map-tablet.html",
+
+    label:
+      "Tablet Map"
+  },
+
+  mobile: {
+    file:
+      "map-mobile.html",
+
+    label:
+      "Mobile Map"
+  }
+};
+
+function pageSourceHas(
+  source,
+  patterns
+) {
+  const text =
+    String(
+      source ||
+      ""
+    ).toLowerCase();
+
+  return (
+    patterns ||
+    []
+  ).some(pattern =>
+    text.includes(
+      String(
+        pattern ||
+        ""
+      ).toLowerCase()
+    )
+  );
+}
+
+function combinePageDependencyCheck(
+  baseCheck,
+  wired,
+  file,
+  serviceLabel
+) {
+  const baseStatus =
+    clean(
+      baseCheck?.status ||
+      "warn"
+    ).toLowerCase();
+
+  const baseMessage =
+    clean(
+      baseCheck?.message ||
+      ""
+    );
+
+  if (
+    baseStatus ===
+    "fail"
+  ) {
+    return check(
+      "fail",
+
+      `${serviceLabel} dependency failed while checking ${file}. ${baseMessage}`
+    );
+  }
+
+  if (!wired) {
+    return check(
+      "warn",
+
+      `${serviceLabel} is reachable, but the expected ${serviceLabel} wiring marker was not found in ${file}. Review this page file.`
+    );
+  }
+
+  return check(
+    baseStatus ===
+    "warn"
+      ? "warn"
+      : "pass",
+
+    `${file}: ${serviceLabel} dependency is reachable and expected page wiring was found.${
+      baseMessage
+        ? " " + baseMessage
+        : ""
+    }`
+  );
+}
+
+async function runPageDiagnostics(
+  req,
+  viewName
+) {
+  const view =
+    PAGE_DIAGNOSTIC_VIEWS[
+      clean(
+        viewName
+      ).toLowerCase()
+    ];
+
+  if (!view) {
+    throw new Error(
+      "Unknown map diagnostic view. Use desktop, laptop, tablet, or mobile."
+    );
+  }
+
+  const pageUrl =
+    `${PUBLIC_SITE_URL}/${view.file}`;
+
+  const pageFetch =
+    await fetchJsonDiagnostic(
+      pageUrl,
+      {
+        headers: {
+          Accept:
+            "text/html,*/*"
+        }
+      },
+      15000
+    );
+
+  if (!pageFetch.reachable) {
+    const failedChecks = {
+      supabase:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      centralProperty:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      ratings:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      maricopaParcel:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      countySketch:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      rentcast:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      permits:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        ),
+
+      capital:
+        check(
+          "fail",
+          `${view.file} could not be reached, so this page-specific dependency was not validated.`
+        )
+    };
+
+    return {
+      page: {
+        file:
+          view.file,
+
+        label:
+          view.label,
+
+        status:
+          "fail",
+
+        message:
+          `${view.file} could not be reached from BlueVera.org.`
+      },
+
+      checks:
+        failedChecks
+    };
+  }
+
+  const htmlSource =
+    typeof pageFetch.data ===
+    "string"
+      ? pageFetch.data
+      : JSON.stringify(
+          pageFetch.data ||
+          ""
+        );
+
+  const baseChecks =
+    await healthChecks(req);
+
+  const wiring = {
+    centralProperty:
+      pageSourceHas(
+        htmlSource,
+        [
+          "/api/save-map-property-baseline",
+          "/api/central-property-report",
+          "propertyid",
+          "centralproperty"
+        ]
+      ),
+
+    ratings:
+      pageSourceHas(
+        htmlSource,
+        [
+          "currentrating",
+          "centralpropertyratingsnapshot",
+          "authoritative",
+          "confidencescore",
+          "disclosure rating"
+        ]
+      ),
+
+    maricopaParcel:
+      pageSourceHas(
+        htmlSource,
+        [
+          "/api/maricopa-parcel"
+        ]
+      ),
+
+    countySketch:
+      pageSourceHas(
+        htmlSource,
+        [
+          "/api/county-sketch",
+          "checkcountysketch"
+        ]
+      ),
+
+    rentcast:
+      pageSourceHas(
+        htmlSource,
+        [
+          "/api/rentcast",
+          "rentcast-cached",
+          "listing sqft",
+          "listingsqft"
+        ]
+      ),
+
+    permits:
+      pageSourceHas(
+        htmlSource,
+        [
+          "/api/phx-permits",
+          "glendale-permits",
+          "scottsdale-permits",
+          "tempe-permits",
+          "permitlinksforcity",
+          "fetchphoenixpermits",
+          "permit"
+        ]
+      ),
+
+    capital:
+      pageSourceHas(
+        htmlSource,
+        [
+          "capital exposure",
+          "capitalexposure",
+          "full-report"
+        ]
+      )
+  };
+
+  const checks = {
+    supabase:
+      baseChecks.supabase,
+
+    centralProperty:
+      combinePageDependencyCheck(
+        baseChecks.centralProperty,
+        wiring.centralProperty,
+        view.file,
+        "Central Property Hub"
+      ),
+
+    ratings:
+      combinePageDependencyCheck(
+        baseChecks.ratings,
+        wiring.ratings,
+        view.file,
+        "Authoritative Rating"
+      ),
+
+    maricopaParcel:
+      combinePageDependencyCheck(
+        baseChecks.maricopaParcel,
+        wiring.maricopaParcel,
+        view.file,
+        "Maricopa Parcel"
+      ),
+
+    countySketch:
+      combinePageDependencyCheck(
+        baseChecks.countySketch,
+        wiring.countySketch,
+        view.file,
+        "County Sketch / Additions"
+      ),
+
+    rentcast:
+      combinePageDependencyCheck(
+        baseChecks.rentcast,
+        wiring.rentcast,
+        view.file,
+        "RentCast / Listing Data"
+      ),
+
+    permits:
+      combinePageDependencyCheck(
+        baseChecks.permits,
+        wiring.permits,
+        view.file,
+        "Permit Services"
+      ),
+
+    capital:
+      combinePageDependencyCheck(
+        baseChecks.capital,
+        wiring.capital,
+        view.file,
+        "Capital Exposure"
+      )
+  };
+
+  const statuses =
+    Object.values(
+      checks
+    ).map(
+      item =>
+        item?.status
+    );
+
+  const pageStatus =
+    statuses.includes(
+      "fail"
+    )
+      ? "fail"
+      : statuses.includes(
+          "warn"
+        )
+        ? "warn"
+        : "pass";
+
+  return {
+    page: {
+      file:
+        view.file,
+
+      label:
+        view.label,
+
+      status:
+        pageStatus,
+
+      message:
+        pageStatus ===
+        "pass"
+          ? `${view.file} is reachable and all expected diagnostic wiring markers were found.`
+          : pageStatus ===
+            "warn"
+            ? `${view.file} is reachable, but one or more categories need review.`
+            : `${view.file} is reachable, but one or more production dependencies failed.`
+    },
+
+    checks
+  };
+}
+
 async function loadMatchingProperties(
   address
 ) {
-  const rows = await rest(
-    "properties?select=*&order=created_at.desc&limit=1000",
-    {
-      method: "GET"
-    }
-  );
+  const rows =
+    await rest(
+      "properties?select=*&order=created_at.desc&limit=1000",
+      {
+        method:
+          "GET"
+      }
+    );
 
-  const matches = (
-    Array.isArray(rows)
-      ? rows
-      : []
-  ).filter(row =>
-    addressesMatch(
-      address,
+  const matches =
+    (
+      Array.isArray(rows)
+        ? rows
+        : []
+    ).filter(row =>
+      addressesMatch(
+        address,
 
-      row.full_address ||
-      row.address ||
-      row.street ||
-      ""
-    )
-  );
+        row.full_address ||
+        row.address ||
+        row.street ||
+        ""
+      )
+    );
 
   const normalizedTarget =
     normalizeAddress(
@@ -743,6 +1203,308 @@ async function loadMatchingProperties(
   return matches;
 }
 
+function recommendedFilesForIssue(
+  moduleName
+) {
+  const module =
+    clean(
+      moduleName
+    ).toLowerCase();
+
+  if (
+    module.includes(
+      "property identity"
+    ) ||
+    module.includes(
+      "central property"
+    )
+  ) {
+    return [
+      {
+        file:
+          "api/save-map-property-baseline.js",
+
+        reason:
+          "Primary public-map property identity resolver and central property creation/update path."
+      },
+      {
+        file:
+          "api/property-information.js",
+
+        reason:
+          "Contains its own address-to-property resolution logic that should align with the canonical resolver."
+      },
+      {
+        file:
+          "api/listing-history.js",
+
+        reason:
+          "Contains additional address matching and duplicate-property compatibility logic."
+      },
+      {
+        file:
+          "api/property-records.js",
+
+        reason:
+          "Legacy address-based property record lookup can attach records to the wrong duplicate."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "capital exposure"
+    )
+  ) {
+    return [
+      {
+        file:
+          "map.html",
+
+        reason:
+          "Currently displays capital exposure and has used full-report page scraping."
+      },
+      {
+        file:
+          "full-report.html",
+
+        reason:
+          "Currently owns the capital-exposure calculation shown to users."
+      },
+      {
+        file:
+          "api/central-property-report.js",
+
+        reason:
+          "Should become the public bridge for one authoritative property-level exposure result."
+      },
+      {
+        file:
+          "BlueVera.app/api/public-property-history.js",
+
+        reason:
+          "Central hub response should eventually return the authoritative capital-exposure fields."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "county sketch"
+    ) ||
+    module.includes(
+      "additions"
+    )
+  ) {
+    return [
+      {
+        file:
+          "api/county-sketch.js",
+
+        reason:
+          "Owns Maricopa sketch retrieval, token/session handling, OCR, and additions detection."
+      },
+      {
+        file:
+          "map.html",
+
+        reason:
+          "Controls the user-facing additions state and retry/session behavior."
+      },
+      {
+        file:
+          "api/bluevera-intelligence.js",
+
+        reason:
+          "Converts additionsFound into the BlueVera additions intelligence result."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "rentcast"
+    )
+  ) {
+    return [
+      {
+        file:
+          "api/rentcast.js",
+
+        reason:
+          "Direct RentCast request path."
+      },
+      {
+        file:
+          "api/rentcast-cached.js",
+
+        reason:
+          "Cached listing path should distinguish no-listing from service failure."
+      },
+      {
+        file:
+          "api/listing-history.js",
+
+        reason:
+          "Listing history consumes property/listing identity and can be affected by duplicate records."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "permit"
+    )
+  ) {
+    return [
+      {
+        file:
+          "api/phx-permits.js",
+
+        reason:
+          "Phoenix permit service used by the public property flow."
+      },
+      {
+        file:
+          "api/phx-issued-permits.js",
+
+        reason:
+          "Related Phoenix issued-permit source that may participate in permit counts."
+      },
+      {
+        file:
+          "api/save-map-property-baseline.js",
+
+        reason:
+          "Persists public permit inputs into the central property/rating system."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "rating"
+    )
+  ) {
+    return [
+      {
+        file:
+          "BlueVera.app/api/recalculate-property-rating.js",
+
+        reason:
+          "Authoritative central rating engine."
+      },
+      {
+        file:
+          "BlueVera.app/api/admin-property-rating.js",
+
+        reason:
+          "Admin property/rating hub and evidence-loading path."
+      },
+      {
+        file:
+          "api/disclosure-rating.js",
+
+        reason:
+          "Public-side rating endpoint should remain aligned with the authoritative central rating."
+      }
+    ];
+  }
+
+  if (
+    module.includes(
+      "maricopa parcel"
+    )
+  ) {
+    return [
+      {
+        file:
+          "api/maricopa-parcel.js",
+
+        reason:
+          "Authoritative public parcel lookup, county response normalization, and parcel cache path."
+      },
+      {
+        file:
+          "api/save-map-property-baseline.js",
+
+        reason:
+          "Consumes parcel identity to establish the central property."
+      }
+    ];
+  }
+
+  return [
+    {
+      file:
+        "api/system-diagnostics.js",
+
+      reason:
+        "Diagnostic routing for this issue does not yet map to a more specific repair file."
+    }
+  ];
+}
+
+function combineRecommendedFiles(
+  failures
+) {
+  const map =
+    new Map();
+
+  for (
+    const failure of
+    failures || []
+  ) {
+    const files =
+      recommendedFilesForIssue(
+        failure.module
+      );
+
+    for (
+      const item of
+      files
+    ) {
+      const key =
+        item.file;
+
+      if (
+        !map.has(key)
+      ) {
+        map.set(
+          key,
+          {
+            file:
+              item.file,
+
+            reason:
+              item.reason,
+
+            triggeredBy:
+              []
+          }
+        );
+      }
+
+      const entry =
+        map.get(key);
+
+      if (
+        !entry.triggeredBy.includes(
+          failure.module
+        )
+      ) {
+        entry.triggeredBy.push(
+          failure.module
+        );
+      }
+    }
+  }
+
+  return Array.from(
+    map.values()
+  );
+}
+
 async function runPropertyDiagnostics(
   address
 ) {
@@ -759,14 +1521,27 @@ async function runPropertyDiagnostics(
     null;
 
   if (!property?.id) {
+    const failure = {
+      module:
+        "Central Property",
+
+      problem:
+        "No matching central property record was found.",
+
+      status:
+        "fail"
+    };
+
     return {
       property: {
         requestedAddress:
           address,
 
-        propertyId: "",
+        propertyId:
+          "",
 
-        apn: "",
+        apn:
+          "",
 
         duplicateCount:
           0,
@@ -791,17 +1566,18 @@ async function runPropertyDiagnostics(
       },
 
       failures: [
-        {
-          module:
-            "Central Property",
+        failure
+      ],
 
-          problem:
-            "No matching central property record was found.",
+      duplicateRecords:
+        [],
 
-          status:
-            "fail"
-        }
-      ]
+      recommendedFiles:
+        combineRecommendedFiles(
+          [
+            failure
+          ]
+        )
     };
   }
 
@@ -966,10 +1742,102 @@ async function runPropertyDiagnostics(
     });
   }
 
-  /*
-    Verify that BlueVera.org central-property-report
-    resolves this same canonical property.
-  */
+  const duplicateRecords = [];
+
+  for (
+    const matched of
+    matches
+  ) {
+    let matchedRating =
+      null;
+
+    try {
+      const matchedRatingRows =
+        await rest(
+          `property_current_ratings?property_id=eq.${encodeURIComponent(
+            matched.id
+          )}&select=disclosure_rating,formula_version,calculated_at,updated_at&limit=1`,
+          {
+            method:
+              "GET"
+          }
+        );
+
+      matchedRating =
+        Array.isArray(
+          matchedRatingRows
+        )
+          ? matchedRatingRows[0] ||
+            null
+          : null;
+    } catch {
+      matchedRating =
+        null;
+    }
+
+    duplicateRecords.push({
+      propertyId:
+        matched.id,
+
+      address:
+        matched.full_address ||
+        matched.address ||
+        matched.street ||
+        "",
+
+      apn:
+        clean(
+          matched.apn
+        ),
+
+      currentRating:
+        Number.isFinite(
+          Number(
+            matchedRating
+              ?.disclosure_rating
+          )
+        )
+          ? Number(
+              matchedRating
+                .disclosure_rating
+            )
+          : (
+              Number.isFinite(
+                Number(
+                  matched
+                    .current_rating
+                )
+              )
+                ? Number(
+                    matched
+                      .current_rating
+                  )
+                : null
+            ),
+
+      formulaVersion:
+        clean(
+          matchedRating
+            ?.formula_version
+        ),
+
+      createdAt:
+        matched.created_at ||
+        null,
+
+      updatedAt:
+        matched.rating_updated_at ||
+        matched.updated_at ||
+        matchedRating?.updated_at ||
+        matchedRating?.calculated_at ||
+        null,
+
+      isCanonical:
+        matched.id ===
+        property.id
+    });
+  }
+
   const bridgeUrl =
     `${PUBLIC_SITE_URL}/api/central-property-report` +
     `?propertyId=${encodeURIComponent(
@@ -1062,9 +1930,6 @@ async function runPropertyDiagnostics(
     });
   }
 
-  /*
-    Live Maricopa parcel lookup.
-  */
   const parcel =
     await fetchJsonDiagnostic(
       `${PUBLIC_SITE_URL}/api/maricopa-parcel?address=${encodeURIComponent(
@@ -1159,9 +2024,6 @@ async function runPropertyDiagnostics(
     });
   }
 
-  /*
-    County Sketch / Additions deep test.
-  */
   let additionsStatus =
     "Not tested";
 
@@ -1276,9 +2138,6 @@ async function runPropertyDiagnostics(
       );
   }
 
-  /*
-    RentCast listing data check.
-  */
   const rentcast =
     await fetchJsonDiagnostic(
       `${PUBLIC_SITE_URL}/api/rentcast?address=${encodeURIComponent(
@@ -1327,9 +2186,6 @@ async function runPropertyDiagnostics(
     });
   }
 
-  /*
-    Phoenix permits.
-  */
   if (
     /\bphoenix\b/i.test(
       address
@@ -1387,10 +2243,6 @@ async function runPropertyDiagnostics(
       );
   }
 
-  /*
-    Current architecture warning.
-    We are NOT fabricating a capital exposure result.
-  */
   checks.capital =
     check(
       "warn",
@@ -1460,7 +2312,14 @@ async function runPropertyDiagnostics(
 
     checks,
 
-    failures
+    failures,
+
+    duplicateRecords,
+
+    recommendedFiles:
+      combineRecommendedFiles(
+        failures
+      )
   };
 }
 
@@ -1487,7 +2346,8 @@ export default async function handler(
       res,
       500,
       {
-        success: false,
+        success:
+          false,
 
         error:
           "Supabase server environment variables are not configured."
@@ -1508,7 +2368,9 @@ export default async function handler(
       res,
       405,
       {
-        success: false,
+        success:
+          false,
+
         error:
           "Method not allowed."
       }
@@ -1516,7 +2378,9 @@ export default async function handler(
   }
 
   try {
-    await verifyAdmin(req);
+    await verifyAdmin(
+      req
+    );
 
     const action =
       clean(
@@ -1537,13 +2401,59 @@ export default async function handler(
         res,
         200,
         {
-          success: true,
+          success:
+            true,
 
           checkedAt:
             new Date()
               .toISOString(),
 
           checks
+        }
+      );
+    }
+
+    if (
+      action ===
+      "page"
+    ) {
+      const view =
+        clean(
+          req.query.view
+        );
+
+      if (!view) {
+        return send(
+          res,
+          400,
+          {
+            success:
+              false,
+
+            error:
+              "A page view is required: desktop, laptop, tablet, or mobile."
+          }
+        );
+      }
+
+      const result =
+        await runPageDiagnostics(
+          req,
+          view
+        );
+
+      return send(
+        res,
+        200,
+        {
+          success:
+            true,
+
+          checkedAt:
+            new Date()
+              .toISOString(),
+
+          ...result
         }
       );
     }
@@ -1562,7 +2472,8 @@ export default async function handler(
           res,
           400,
           {
-            success: false,
+            success:
+              false,
 
             error:
               "A property address is required."
@@ -1579,7 +2490,8 @@ export default async function handler(
         res,
         200,
         {
-          success: true,
+          success:
+            true,
 
           checkedAt:
             new Date()
@@ -1594,7 +2506,8 @@ export default async function handler(
       res,
       400,
       {
-        success: false,
+        success:
+          false,
 
         error:
           "Unknown diagnostics action."
@@ -1623,7 +2536,9 @@ export default async function handler(
       res,
       status,
       {
-        success: false,
+        success:
+          false,
+
         error:
           message
       }
