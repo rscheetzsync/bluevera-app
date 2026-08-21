@@ -11,10 +11,10 @@ export default async function handler(req, res) {
 
     const filter = "StandardStatus Eq 'Active'";
 
-    const url =
-      "https://replication.sparkapi.com/v1/listings?_filter=" +
-      encodeURIComponent(filter) +
-      "&_limit=1";
+  const url =
+  "https://replication.sparkapi.com/v1/listings?_filter=" +
+  encodeURIComponent(filter) +
+  "&_pagination=count";
 
     const response = await fetch(url, {
       method: "GET",
