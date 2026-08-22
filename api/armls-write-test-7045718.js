@@ -6,7 +6,7 @@ export const config = {
   }
 };
 
-const MLS_NUMBER = "7045718";
+const DEFAULT_MLS_NUMBER = "7045718";
 
 const SPARK_BASE =
   "https://replication.sparkapi.com/v1";
@@ -80,7 +80,8 @@ function validYear(value) {
 }
 
 function dateOnly(value) {
-  const text = clean(value);
+  const text =
+    clean(value);
 
   if (!text) {
     return null;
@@ -415,6 +416,19 @@ function buildAddress(fields) {
     .join(" ");
 }
 
+function buildStreet(fields) {
+  return [
+    fields.StreetNumber,
+    fields.StreetDirPrefix,
+    fields.StreetName,
+    fields.StreetSuffix,
+    fields.StreetDirSuffix,
+    fields.UnitNumber
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 
 /* ============================================================
    FIND EXISTING PROPERTY
@@ -429,11 +443,6 @@ async function findExistingProperty({
 }) {
   const normalizedApn =
     normalizeApn(apn);
-
-  /*
-    First search likely properties in
-    the same geographic area.
-  */
 
   let path =
     "properties" +
@@ -464,7 +473,8 @@ async function findExistingProperty({
     await supabaseRequest(
       path,
       {
-        method: "GET"
+        method:
+          "GET"
       }
     );
 
@@ -489,7 +499,8 @@ async function findExistingProperty({
       );
 
     if (
-      apnMatches.length === 1
+      apnMatches.length ===
+      1
     ) {
       return {
         property:
@@ -501,7 +512,8 @@ async function findExistingProperty({
     }
 
     if (
-      apnMatches.length > 1
+      apnMatches.length >
+      1
     ) {
       throw new Error(
         "Multiple BlueVera properties matched this APN. Write stopped."
@@ -544,7 +556,8 @@ async function findExistingProperty({
       );
 
     if (
-      addressMatches.length === 1
+      addressMatches.length ===
+      1
     ) {
       return {
         property:
@@ -556,7 +569,8 @@ async function findExistingProperty({
     }
 
     if (
-      addressMatches.length > 1
+      addressMatches.length >
+      1
     ) {
       throw new Error(
         "Multiple BlueVera properties matched this address. Write stopped."
@@ -586,26 +600,26 @@ async function createProperty({
   zip,
   apn
 }) {
-const payload = {
-  full_address:
-    address,
+  const payload = {
+    full_address:
+      address,
 
-  street:
-    street,
+    street:
+      street,
 
-  city:
-    city,
+    city:
+      city,
 
-  state:
-    state,
+    state:
+      state,
 
-  zip:
-    zip,
+    zip:
+      zip,
 
-  apn:
-    apn ||
-    null
-};
+    apn:
+      apn ||
+      null
+  };
 
   const rows =
     await supabaseRequest(
@@ -648,7 +662,8 @@ const payload = {
 async function savePropertyListing({
   propertyId,
   listing,
-  fields
+  fields,
+  mlsNumber
 }) {
   const payload = {
     property_id:
@@ -658,7 +673,7 @@ async function savePropertyListing({
       "armls",
 
     mls_number:
-      MLS_NUMBER,
+      mlsNumber,
 
     listing_key:
       clean(
@@ -744,14 +759,12 @@ async function saveHistoryRecord({
   propertyListingId,
   systemType,
   year,
-  scope
+  scope,
+  mlsNumber
 }) {
   /*
-    Check first.
-
-    This makes the test idempotent:
-    running it again does not create
-    another copy of the same MLS event.
+    Running the same MLS again should
+    NOT create duplicate history.
   */
 
   const existing =
@@ -765,7 +778,7 @@ async function saveHistoryRecord({
       "&source_type=eq.armls" +
       "&source_record_id=eq." +
       encodeURIComponent(
-        MLS_NUMBER
+        mlsNumber
       ) +
       "&system_type=eq." +
       encodeURIComponent(
@@ -786,12 +799,6 @@ async function saveHistoryRecord({
     Array.isArray(existing) &&
     existing[0]?.id
   ) {
-    /*
-      Keep same permanent event,
-      but allow scope/listing link
-      to be refreshed.
-    */
-
     const updated =
       await supabaseRequest(
         "property_history_records" +
@@ -835,9 +842,9 @@ async function saveHistoryRecord({
   }
 
 
-  /*
-    New permanent listing-history event.
-  */
+  /* ----------------------------------------------------------
+     NEW PERMANENT LISTING HISTORY EVENT
+  ---------------------------------------------------------- */
 
   const payload = {
     property_id:
@@ -868,7 +875,7 @@ async function saveHistoryRecord({
       "ARMLS",
 
     source_record_id:
-      MLS_NUMBER,
+      mlsNumber,
 
     statement:
       `${systemType} update reported for ${year}`,
@@ -943,7 +950,9 @@ export default async function handler(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "SPARK_ACCESS_TOKEN is missing"
         });
@@ -956,7 +965,9 @@ export default async function handler(
       return res
         .status(500)
         .json({
-          success: false,
+          success:
+            false,
+
           error:
             "Supabase server environment variables are missing"
         });
@@ -964,11 +975,42 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       FETCH MLS 7045718
+       GET MLS NUMBER FROM URL
+
+       Example:
+       ?mls=7044505
+    -------------------------------------------------------- */
+
+    const mlsNumber =
+      clean(
+        req.query?.mls ||
+        req.query?.mlsNumber ||
+        DEFAULT_MLS_NUMBER
+      );
+
+    if (
+      !/^\d+$/.test(
+        mlsNumber
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          success:
+            false,
+
+          error:
+            "A valid numeric MLS number is required."
+        });
+    }
+
+
+    /* --------------------------------------------------------
+       FETCH ARMLS LISTING
     -------------------------------------------------------- */
 
     const filter =
-      `ListingId Eq '${MLS_NUMBER}'`;
+      `ListingId Eq '${mlsNumber}'`;
 
     const sparkUrl =
       `${SPARK_BASE}/listings` +
@@ -982,6 +1024,9 @@ export default async function handler(
       await fetch(
         sparkUrl,
         {
+          method:
+            "GET",
+
           headers: {
             Authorization:
               `Bearer ${SPARK_TOKEN}`,
@@ -1002,6 +1047,7 @@ export default async function handler(
         JSON.parse(
           sparkText
         );
+
     } catch {
       throw new Error(
         "Spark returned invalid JSON."
@@ -1011,6 +1057,7 @@ export default async function handler(
     if (!sparkResponse.ok) {
       throw new Error(
         sparkData?.D?.Message ||
+        sparkData?.message ||
         "Spark listing request failed."
       );
     }
@@ -1030,9 +1077,14 @@ export default async function handler(
             false,
 
           error:
-            `MLS ${MLS_NUMBER} was not found.`
+            `MLS ${mlsNumber} was not found.`
         });
     }
+
+
+    /* --------------------------------------------------------
+       READ LISTING
+    -------------------------------------------------------- */
 
     const fields =
       listing.StandardFields ||
@@ -1050,18 +1102,12 @@ export default async function handler(
       );
 
     const street =
+      buildStreet(
+        fields
+      ) ||
       clean(
         fields.UnparsedAddress
-      ) ||
-      [
-        fields.StreetNumber,
-        fields.StreetDirPrefix,
-        fields.StreetName,
-        fields.StreetSuffix,
-        fields.StreetDirSuffix
-      ]
-        .filter(Boolean)
-        .join(" ");
+      );
 
     const city =
       clean(
@@ -1129,7 +1175,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       SAVE MLS LISTING
+       SAVE / UPDATE MLS LISTING
     -------------------------------------------------------- */
 
     const savedListing =
@@ -1139,7 +1185,9 @@ export default async function handler(
 
         listing,
 
-        fields
+        fields,
+
+        mlsNumber
       });
 
 
@@ -1147,7 +1195,8 @@ export default async function handler(
        SAVE DATED LISTING UPDATES
     -------------------------------------------------------- */
 
-    const historyResults = [];
+    const historyResults =
+      [];
 
     for (
       const [
@@ -1172,17 +1221,23 @@ export default async function handler(
             update.year,
 
           scope:
-            update.scope
+            update.scope,
+
+          mlsNumber
         });
 
       historyResults.push({
         systemType,
+
         eventYear:
           update.year,
+
         updateScope:
           update.scope,
+
         action:
           result.action,
+
         historyRecordId:
           result.record?.id ||
           null
@@ -1191,11 +1246,11 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       RETURN TEST RESULT
+       RESPONSE
 
        IMPORTANT:
-       NO RATING RECALCULATION HERE.
-       NO MAP WRITE HERE.
+       This still does NOT directly write to map.html.
+       This still does NOT recalculate the rating.
     -------------------------------------------------------- */
 
     return res
@@ -1205,10 +1260,9 @@ export default async function handler(
           true,
 
         mode:
-          "CONTROLLED_SINGLE_LISTING_WRITE",
+          "CONTROLLED_REUSABLE_LISTING_WRITE",
 
-        mlsNumber:
-          MLS_NUMBER,
+        mlsNumber,
 
         property: {
           id:
@@ -1237,7 +1291,13 @@ export default async function handler(
             savedListing.mls_number,
 
           status:
-            savedListing.listing_status
+            savedListing.listing_status,
+
+          listPrice:
+            savedListing.list_price,
+
+          modificationTimestamp:
+            savedListing.modification_timestamp
         },
 
         updatesFound:
@@ -1254,12 +1314,12 @@ export default async function handler(
           false,
 
         note:
-          "Permanent ARMLS listing history was stored. This test does not directly update map.html or recalculate the Disclosure Rating."
+          "Permanent ARMLS listing history was stored. Loading an Agent Dashboard or map page is not required and does not trigger this sync."
       });
 
   } catch (error) {
     console.error(
-      "Controlled ARMLS write test failed:",
+      "ARMLS listing sync test failed:",
       error
     );
 
@@ -1271,7 +1331,7 @@ export default async function handler(
 
         error:
           error?.message ||
-          "Controlled ARMLS write test failed."
+          "ARMLS listing sync test failed."
       });
   }
 }
