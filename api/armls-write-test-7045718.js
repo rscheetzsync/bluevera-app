@@ -586,29 +586,26 @@ async function createProperty({
   zip,
   apn
 }) {
-  const payload = {
-    full_address:
-      address,
+const payload = {
+  full_address:
+    address,
 
-    street:
-      street,
+  street:
+    street,
 
-    city:
-      city,
+  city:
+    city,
 
-    state:
-      state,
+  state:
+    state,
 
-    zip:
-      zip,
+  zip:
+    zip,
 
-    apn:
-      apn ||
-      null,
-
-    source:
-      "armls"
-  };
+  apn:
+    apn ||
+    null
+};
 
   const rows =
     await supabaseRequest(
