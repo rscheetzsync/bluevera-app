@@ -12,9 +12,8 @@ const SPARK_BASE =
   "https://replication.sparkapi.com/v1";
 
 const SUPABASE_URL =
-  String(
-    process.env.SUPABASE_URL || ""
-  ).replace(/\/+$/, "");
+  String(process.env.SUPABASE_URL || "")
+    .replace(/\/+$/, "");
 
 const SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -22,7 +21,8 @@ const SERVICE_KEY =
   "";
 
 const SPARK_TOKEN =
-  process.env.SPARK_ACCESS_TOKEN || "";
+  process.env.SPARK_ACCESS_TOKEN ||
+  "";
 
 
 /* ============================================================
@@ -66,8 +66,7 @@ function normalizeAddress(value) {
 }
 
 function validYear(value) {
-  const year =
-    Number(clean(value));
+  const year = Number(clean(value));
 
   const currentYear =
     new Date().getFullYear();
@@ -80,8 +79,7 @@ function validYear(value) {
 }
 
 function dateOnly(value) {
-  const text =
-    clean(value);
+  const text = clean(value);
 
   if (!text) {
     return null;
@@ -148,14 +146,23 @@ async function supabaseRequest(
   }
 
   if (!response.ok) {
-    throw new Error(
-      data?.message ||
-      data?.error ||
-      data?.details ||
-      data?.hint ||
-      text ||
-      `Supabase request failed (${response.status})`
-    );
+    const error =
+      new Error(
+        data?.message ||
+        data?.error ||
+        data?.details ||
+        data?.hint ||
+        text ||
+        `Supabase request failed (${response.status})`
+      );
+
+    error.status =
+      response.status;
+
+    error.data =
+      data;
+
+    throw error;
   }
 
   return data;
@@ -225,7 +232,7 @@ function findCustomField(
 
 
 /* ============================================================
-   EXTRACT LISTING UPDATE YEARS
+   EXTRACT ARMLS LISTING UPDATE YEARS
 ============================================================ */
 
 function extractUpdates(
@@ -387,7 +394,7 @@ function extractUpdates(
 
 
 /* ============================================================
-   ADDRESS
+   ADDRESS HELPERS
 ============================================================ */
 
 function buildAddress(fields) {
@@ -431,7 +438,50 @@ function buildStreet(fields) {
 
 
 /* ============================================================
-   FIND EXISTING PROPERTY
+   GET PROPERTY CANDIDATES
+============================================================ */
+
+async function getPropertyCandidates({
+  city,
+  state,
+  zip
+}) {
+  let path =
+    "properties" +
+    "?select=id,full_address,street,city,state,zip,apn";
+
+  /*
+    ZIP is the safest geographic limiter
+    because some older BlueVera records
+    may say AZ and others may say Arizona.
+  */
+
+  if (zip) {
+    path +=
+      "&zip=eq." +
+      encodeURIComponent(zip);
+  }
+
+  path +=
+    "&limit=1000";
+
+  const rows =
+    await supabaseRequest(
+      path,
+      {
+        method:
+          "GET"
+      }
+    );
+
+  return Array.isArray(rows)
+    ? rows
+    : [];
+}
+
+
+/* ============================================================
+   FIND EXISTING PERMANENT PROPERTY
 ============================================================ */
 
 async function findExistingProperty({
@@ -444,48 +494,16 @@ async function findExistingProperty({
   const normalizedApn =
     normalizeApn(apn);
 
-  let path =
-    "properties" +
-    "?select=id,full_address,street,city,state,zip,apn";
-
-  if (city) {
-    path +=
-      "&city=ilike." +
-      encodeURIComponent(city);
-  }
-
-  if (state) {
-    path +=
-      "&state=eq." +
-      encodeURIComponent(state);
-  }
-
-  if (zip) {
-    path +=
-      "&zip=eq." +
-      encodeURIComponent(zip);
-  }
-
-  path +=
-    "&limit=500";
-
-  const rows =
-    await supabaseRequest(
-      path,
-      {
-        method:
-          "GET"
-      }
-    );
-
   const properties =
-    Array.isArray(rows)
-      ? rows
-      : [];
+    await getPropertyCandidates({
+      city,
+      state,
+      zip
+    });
 
 
   /* ----------------------------------------------------------
-     APN FIRST
+     1. APN FIRST
   ---------------------------------------------------------- */
 
   if (normalizedApn) {
@@ -499,8 +517,7 @@ async function findExistingProperty({
       );
 
     if (
-      apnMatches.length ===
-      1
+      apnMatches.length === 1
     ) {
       return {
         property:
@@ -512,8 +529,7 @@ async function findExistingProperty({
     }
 
     if (
-      apnMatches.length >
-      1
+      apnMatches.length > 1
     ) {
       throw new Error(
         "Multiple BlueVera properties matched this APN. Write stopped."
@@ -523,7 +539,7 @@ async function findExistingProperty({
 
 
   /* ----------------------------------------------------------
-     ADDRESS SECOND
+     2. NORMALIZED ADDRESS SECOND
   ---------------------------------------------------------- */
 
   const targetAddress =
@@ -556,8 +572,7 @@ async function findExistingProperty({
       );
 
     if (
-      addressMatches.length ===
-      1
+      addressMatches.length === 1
     ) {
       return {
         property:
@@ -569,8 +584,7 @@ async function findExistingProperty({
     }
 
     if (
-      addressMatches.length >
-      1
+      addressMatches.length > 1
     ) {
       throw new Error(
         "Multiple BlueVera properties matched this address. Write stopped."
@@ -589,7 +603,7 @@ async function findExistingProperty({
 
 
 /* ============================================================
-   CREATE PROPERTY
+   CREATE PROPERTY WITH RACE PROTECTION
 ============================================================ */
 
 async function createProperty({
@@ -621,42 +635,124 @@ async function createProperty({
       null
   };
 
-  const rows =
-    await supabaseRequest(
-      "properties",
-      {
-        method:
-          "POST",
+  try {
+    const rows =
+      await supabaseRequest(
+        "properties",
+        {
+          method:
+            "POST",
 
-        headers: {
-          Prefer:
-            "return=representation"
-        },
+          headers: {
+            Prefer:
+              "return=representation"
+          },
 
-        body:
-          JSON.stringify(
-            payload
-          )
-      }
-    );
+          body:
+            JSON.stringify(
+              payload
+            )
+        }
+      );
 
-  const property =
-    Array.isArray(rows)
-      ? rows[0]
-      : rows;
+    const property =
+      Array.isArray(rows)
+        ? rows[0]
+        : rows;
 
-  if (!property?.id) {
-    throw new Error(
-      "ARMLS property was created but no property ID was returned."
-    );
+    if (!property?.id) {
+      throw new Error(
+        "ARMLS property was created but no property ID was returned."
+      );
+    }
+
+    return {
+      property,
+
+      action:
+        "created_new_property"
+    };
+
+  } catch (error) {
+
+    /*
+      IMPORTANT
+
+      Supabase now has the unique index:
+
+      properties_unique_normalized_apn_idx
+
+      If two ARMLS requests hit at nearly
+      the same time, only one property can
+      win the insert.
+
+      The losing request re-fetches the
+      property instead of creating another.
+    */
+
+    const normalizedRequestedApn =
+      normalizeApn(apn);
+
+    if (!normalizedRequestedApn) {
+      throw error;
+    }
+
+    const properties =
+      await getPropertyCandidates({
+        city,
+        state,
+        zip
+      });
+
+    const apnMatches =
+      properties.filter(
+        property =>
+          normalizeApn(
+            property.apn
+          ) ===
+          normalizedRequestedApn
+      );
+
+    if (
+      apnMatches.length === 1
+    ) {
+      console.log(
+        "Property insert conflict resolved. Existing APN property reused:",
+        apnMatches[0].id
+      );
+
+      return {
+        property:
+          apnMatches[0],
+
+        action:
+          "matched_existing_after_insert_conflict"
+      };
+    }
+
+    if (
+      apnMatches.length > 1
+    ) {
+      throw new Error(
+        "Multiple BlueVera properties matched this APN after insert conflict. Write stopped."
+      );
+    }
+
+    /*
+      If we cannot find an existing property,
+      then the original insert failed for
+      another reason.
+
+      Return the original error.
+    */
+
+    throw error;
   }
-
-  return property;
 }
 
 
 /* ============================================================
-   UPSERT PROPERTY LISTING
+   SAVE / UPDATE PROPERTY LISTING
 ============================================================ */
 
 async function savePropertyListing({
@@ -709,10 +805,12 @@ async function savePropertyListing({
       null,
 
     source_payload_updated_at:
-      new Date().toISOString(),
+      new Date()
+        .toISOString(),
 
     updated_at:
-      new Date().toISOString()
+      new Date()
+        .toISOString()
   };
 
   const rows =
@@ -751,7 +849,7 @@ async function savePropertyListing({
 
 
 /* ============================================================
-   SAVE ONE HISTORY RECORD
+   SAVE ONE PERMANENT HISTORY RECORD
 ============================================================ */
 
 async function saveHistoryRecord({
@@ -762,9 +860,10 @@ async function saveHistoryRecord({
   scope,
   mlsNumber
 }) {
+
   /*
-    Running the same MLS again should
-    NOT create duplicate history.
+    Check first so the same MLS listing
+    does not create duplicate history.
   */
 
   const existing =
@@ -799,6 +898,7 @@ async function saveHistoryRecord({
     Array.isArray(existing) &&
     existing[0]?.id
   ) {
+
     const updated =
       await supabaseRequest(
         "property_history_records" +
@@ -843,7 +943,7 @@ async function saveHistoryRecord({
 
 
   /* ----------------------------------------------------------
-     NEW PERMANENT LISTING HISTORY EVENT
+     CREATE NEW LISTING UPDATE HISTORY
   ---------------------------------------------------------- */
 
   const payload = {
@@ -896,39 +996,94 @@ async function saveHistoryRecord({
       false
   };
 
-  const rows =
-    await supabaseRequest(
-      "property_history_records",
-      {
-        method:
-          "POST",
+  try {
+    const rows =
+      await supabaseRequest(
+        "property_history_records",
+        {
+          method:
+            "POST",
 
-        headers: {
-          Prefer:
-            "return=representation"
-        },
+          headers: {
+            Prefer:
+              "return=representation"
+          },
 
-        body:
-          JSON.stringify(
-            payload
-          )
-      }
-    );
+          body:
+            JSON.stringify(
+              payload
+            )
+        }
+      );
 
-  return {
-    action:
-      "created",
+    return {
+      action:
+        "created",
 
-    record:
-      Array.isArray(rows)
-        ? rows[0]
-        : rows
-  };
+      record:
+        Array.isArray(rows)
+          ? rows[0]
+          : rows
+    };
+
+  } catch (error) {
+
+    /*
+      property_history_records already has
+      a unique source-event index.
+
+      If two requests race, re-fetch the
+      history record instead of duplicating it.
+    */
+
+    const retry =
+      await supabaseRequest(
+        "property_history_records" +
+        "?select=*" +
+        "&property_id=eq." +
+        encodeURIComponent(
+          propertyId
+        ) +
+        "&source_type=eq.armls" +
+        "&source_record_id=eq." +
+        encodeURIComponent(
+          mlsNumber
+        ) +
+        "&system_type=eq." +
+        encodeURIComponent(
+          systemType
+        ) +
+        "&event_year=eq." +
+        encodeURIComponent(
+          year
+        ) +
+        "&limit=1",
+        {
+          method:
+            "GET"
+        }
+      );
+
+    if (
+      Array.isArray(retry) &&
+      retry[0]?.id
+    ) {
+      return {
+        action:
+          "existing_after_insert_conflict",
+
+        record:
+          retry[0]
+      };
+    }
+
+    throw error;
+  }
 }
 
 
 /* ============================================================
-   MAIN
+   MAIN API
 ============================================================ */
 
 export default async function handler(
@@ -946,6 +1101,11 @@ export default async function handler(
   );
 
   try {
+
+    /* --------------------------------------------------------
+       ENVIRONMENT CHECKS
+    -------------------------------------------------------- */
+
     if (!SPARK_TOKEN) {
       return res
         .status(500)
@@ -975,10 +1135,11 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       GET MLS NUMBER FROM URL
+       GET MLS NUMBER
 
        Example:
-       ?mls=7044505
+
+       /api/armls-sync-listing-test?mls=7044505
     -------------------------------------------------------- */
 
     const mlsNumber =
@@ -1083,7 +1244,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       READ LISTING
+       EXTRACT ARMLS PROPERTY INFORMATION
     -------------------------------------------------------- */
 
     const fields =
@@ -1140,7 +1301,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       FIND OR CREATE PERMANENT PROPERTY
+       FIND PERMANENT BLUEVERA PROPERTY
     -------------------------------------------------------- */
 
     const match =
@@ -1158,8 +1319,16 @@ export default async function handler(
     let propertyAction =
       "matched_existing";
 
+    let matchType =
+      match.matchType;
+
+
+    /* --------------------------------------------------------
+       CREATE PROPERTY ONLY IF NONE EXISTS
+    -------------------------------------------------------- */
+
     if (!property?.id) {
-      property =
+      const createResult =
         await createProperty({
           address,
           street,
@@ -1169,8 +1338,26 @@ export default async function handler(
           apn
         });
 
+      property =
+        createResult.property;
+
       propertyAction =
-        "created_new_property";
+        createResult.action;
+
+      if (
+        createResult.action ===
+        "matched_existing_after_insert_conflict"
+      ) {
+        matchType =
+          "apn_insert_conflict_recovered";
+      }
+    }
+
+
+    if (!property?.id) {
+      throw new Error(
+        "BlueVera could not resolve a permanent property ID."
+      );
     }
 
 
@@ -1192,7 +1379,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       SAVE DATED LISTING UPDATES
+       SAVE PERMANENT LISTING UPDATE HISTORY
     -------------------------------------------------------- */
 
     const historyResults =
@@ -1246,11 +1433,17 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       RESPONSE
+       RETURN RESULT
 
        IMPORTANT:
-       This still does NOT directly write to map.html.
-       This still does NOT recalculate the rating.
+
+       This endpoint stores permanent
+       property/listing history.
+
+       It does NOT directly write to map.html.
+
+       It does NOT recalculate the Disclosure
+       Rating yet.
     -------------------------------------------------------- */
 
     return res
@@ -1271,8 +1464,7 @@ export default async function handler(
           action:
             propertyAction,
 
-          matchType:
-            match.matchType,
+          matchType,
 
           address:
             property.full_address ||
@@ -1313,8 +1505,22 @@ export default async function handler(
         mapUpdated:
           false,
 
+        protections: {
+          apnFirstMatching:
+            true,
+
+          normalizedApnDatabaseLock:
+            true,
+
+          propertyInsertRaceRecovery:
+            true,
+
+          historyDuplicateProtection:
+            true
+        },
+
         note:
-          "Permanent ARMLS listing history was stored. Loading an Agent Dashboard or map page is not required and does not trigger this sync."
+          "Permanent ARMLS listing history was stored. Agent Dashboard or map viewing does not trigger this sync."
       });
 
   } catch (error) {
