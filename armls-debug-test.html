@@ -191,7 +191,7 @@
     outputEl.textContent = "Loading…";
 
     try{
-      const response = await fetch("/api/armls-listing", {
+      const response = await fetch("https://bluevera.org/api/armls-listing", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
