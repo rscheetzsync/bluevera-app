@@ -110,7 +110,10 @@
           "Content-Type":"application/json",
           "Authorization":"Bearer " + token
         },
-        body:JSON.stringify({ mlsNumber })
+        body: JSON.stringify({
+  mlsNumber,
+  token
+})
       });
 
       const text = await response.text();
