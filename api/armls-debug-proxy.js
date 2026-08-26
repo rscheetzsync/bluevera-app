@@ -7,16 +7,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    const authHeader = req.headers.authorization || "";
+    const mlsNumber = String(req.body?.mlsNumber || "").trim();
+    const token = String(req.body?.token || "").trim();
 
-    if (!authHeader.startsWith("Bearer ")) {
+    if (!token) {
       return res.status(401).json({
         success: false,
-        error: "Authentication required"
+        error: "Authentication token missing"
       });
     }
-
-    const mlsNumber = String(req.body?.mlsNumber || "").trim();
 
     if (!/^[A-Za-z0-9-]{3,30}$/.test(mlsNumber)) {
       return res.status(400).json({
@@ -31,7 +30,7 @@ export default async function handler(req, res) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": authHeader,
+          "Authorization": `Bearer ${token}`,
           "Accept": "application/json"
         },
         body: JSON.stringify({
@@ -51,10 +50,7 @@ export default async function handler(req, res) {
     return res.send(text);
 
   } catch (error) {
-    console.error(
-      "ARMLS debug proxy error:",
-      error
-    );
+    console.error("ARMLS debug proxy error:", error);
 
     return res.status(500).json({
       success: false,
