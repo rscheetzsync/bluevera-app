@@ -2,6 +2,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({
       success: false,
+      stage: "proxy",
       error: "Method not allowed"
     });
   }
@@ -13,13 +14,15 @@ export default async function handler(req, res) {
     if (!token) {
       return res.status(401).json({
         success: false,
-        error: "Authentication token missing"
+        stage: "bluevera-app-proxy",
+        error: "Token did not reach proxy"
       });
     }
 
     if (!/^[A-Za-z0-9-]{3,30}$/.test(mlsNumber)) {
       return res.status(400).json({
         success: false,
+        stage: "bluevera-app-proxy",
         error: "Enter a valid MLS number"
       });
     }
@@ -41,19 +44,33 @@ export default async function handler(req, res) {
 
     const text = await upstream.text();
 
-    res.status(upstream.status);
-    res.setHeader(
-      "Content-Type",
-      "application/json; charset=utf-8"
-    );
+    let upstreamData;
 
-    return res.send(text);
+    try {
+      upstreamData = JSON.parse(text);
+    } catch {
+      upstreamData = {
+        rawResponse: text
+      };
+    }
+
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({
+        success: false,
+        stage: "bluevera-org-armls-listing",
+        upstreamStatus: upstream.status,
+        upstreamResponse: upstreamData
+      });
+    }
+
+    return res.status(200).json(upstreamData);
 
   } catch (error) {
     console.error("ARMLS debug proxy error:", error);
 
     return res.status(500).json({
       success: false,
+      stage: "proxy-exception",
       error: "ARMLS debug proxy failed"
     });
   }
