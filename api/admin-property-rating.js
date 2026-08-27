@@ -1,5 +1,4 @@
 import {
-  searchProperties,
   loadPropertyEvidence
 } from "../lib/property-evidence.js";
 
@@ -20,6 +19,46 @@ function clean(value) {
   return String(value ?? "").trim();
 }
 
+async function fetchWithTimeout(
+  url,
+  options = {},
+  timeoutMs = 12000
+) {
+  const controller =
+    new AbortController();
+
+  const timer =
+    setTimeout(
+      () => controller.abort(),
+      timeoutMs
+    );
+
+  try {
+    return await fetch(
+      url,
+      {
+        ...options,
+        signal:
+          options.signal ||
+          controller.signal
+      }
+    );
+  } catch (error) {
+    if (
+      error?.name ===
+      "AbortError"
+    ) {
+      throw new Error(
+        "The database request timed out. Please try again."
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 
 /* =========================================================
    SUPABASE REQUEST
@@ -29,7 +68,7 @@ async function rest(
   path,
   options = {}
 ) {
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${SUPABASE_URL}/rest/v1/${path}`,
     {
       ...options,
@@ -77,6 +116,143 @@ async function rest(
 }
 
 
+
+/* =========================================================
+   SAFE CENTRAL PROPERTY SEARCH
+   ========================================================= */
+
+function uniqueProperties(rows) {
+  const seen =
+    new Set();
+
+  return (
+    Array.isArray(rows)
+      ? rows
+      : []
+  ).filter(row => {
+    const id =
+      clean(row?.id);
+
+    if (
+      !id ||
+      seen.has(id)
+    ) {
+      return false;
+    }
+
+    seen.add(id);
+    return true;
+  });
+}
+
+async function searchCentralProperties(query) {
+  const q =
+    clean(query)
+      .replace(/[%*]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (!q) {
+    return [];
+  }
+
+  const uuidLike =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(q);
+
+  if (uuidLike) {
+    const exactRows =
+      await rest(
+        `properties?id=eq.${encodeURIComponent(q)}&select=*&limit=1`,
+        {
+          method: "GET"
+        }
+      );
+
+    if (
+      Array.isArray(exactRows) &&
+      exactRows.length
+    ) {
+      return exactRows;
+    }
+  }
+
+  const pattern =
+    encodeURIComponent(
+      `*${q}*`
+    );
+
+  /*
+    Keep the admin search independent from the shared evidence
+    loader. This prevents a property-search problem from blocking
+    the entire Rating Manager and keeps the search request small.
+  */
+  const attempts = [
+    `properties?full_address=ilike.${pattern}&select=*&limit=25`,
+    `properties?address=ilike.${pattern}&select=*&limit=25`,
+    `properties?street=ilike.${pattern}&select=*&limit=25`,
+    `properties?apn=ilike.${pattern}&select=*&limit=25`
+  ];
+
+  const collected = [];
+  let lastError = null;
+
+  for (
+    const path of attempts
+  ) {
+    try {
+      const rows =
+        await rest(
+          path,
+          {
+            method: "GET"
+          }
+        );
+
+      if (
+        Array.isArray(rows) &&
+        rows.length
+      ) {
+        collected.push(
+          ...rows
+        );
+      }
+    } catch (error) {
+      /*
+        One optional property column may not exist in every
+        historical schema. Continue to the next safe lookup.
+      */
+      lastError = error;
+    }
+  }
+
+  const unique =
+    uniqueProperties(
+      collected
+    );
+
+  if (unique.length) {
+    return unique.slice(
+      0,
+      25
+    );
+  }
+
+  if (
+    lastError &&
+    /timed out/i.test(
+      clean(
+        lastError.message
+      )
+    )
+  ) {
+    throw lastError;
+  }
+
+  return [];
+}
+
+
 /* =========================================================
    VERIFY ADMIN
    ========================================================= */
@@ -95,7 +271,7 @@ async function verifyAdmin(req) {
     );
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${SUPABASE_URL}/auth/v1/user`,
     {
       headers: {
@@ -208,7 +384,7 @@ async function callCentralRecalculation(
     `https://${req.headers.host}`
   ).origin;
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `${origin}/api/recalculate-property-rating`,
     {
       method: "POST",
@@ -225,7 +401,8 @@ async function callCentralRecalculation(
         JSON.stringify({
           propertyId
         })
-    }
+    },
+    20000
   );
 
   const result =
@@ -378,15 +555,8 @@ export default async function handler(
         "search"
       ) {
         const properties =
-          await searchProperties(
-            req.query.q,
-            {
-              supabaseUrl:
-                SUPABASE_URL,
-
-              serviceKey:
-                SERVICE_KEY
-            }
+          await searchCentralProperties(
+            req.query.q
           );
 
         return res
