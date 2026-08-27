@@ -23,7 +23,7 @@ const INTERNAL_API_KEY =
   "";
 
 const RATING_VERSION =
-  "bluevera-v5-property-knowledge-40-documents-60";
+  "bluevera-v5-1-armls-central-history";
 
 function clean(value) {
   return String(value ?? "")
@@ -543,7 +543,8 @@ async function loadPropertyEntries(
   const [
     reportEntries,
     historyItems,
-    listingSources
+    listingSources,
+    permanentHistoryRecords
   ] = await Promise.all([
     optionalSupabaseRequest(
       `property_report_entries?property_id=eq.${encodedId}&select=*`,
@@ -561,6 +562,13 @@ async function loadPropertyEntries(
 
     optionalSupabaseRequest(
       `property_listing_sources?property_id=eq.${encodedId}&select=*`,
+      {
+        method: "GET"
+      }
+    ),
+
+    optionalSupabaseRequest(
+      `property_history_records?property_id=eq.${encodedId}&select=*`,
       {
         method: "GET"
       }
@@ -661,10 +669,103 @@ async function loadPropertyEntries(
       )
     );
 
+  /*
+    Permanent ARMLS / listing history.
+
+    ARMLS intake already stores dated system updates in
+    property_history_records. Normalize those rows into the same
+    internal evidence shape used by the rating calculator so the
+    four major-system history score can use them without creating
+    duplicate records in property_history_items.
+  */
+  const normalizedPermanentHistoryRecords =
+    permanentHistoryRecords.map(row => {
+      const isArmls =
+        normalize(row.source_name) === "armls" ||
+        normalize(row.verification_status) === "listing_reported" ||
+        normalize(row.history_type) === "listing_update";
+
+      return normalizeContributorEntry(
+        {
+          ...row,
+
+          category:
+            row.history_type ||
+            "Property History Record",
+
+          system_name:
+            row.system_type ||
+            row.event_type ||
+            "",
+
+          statement:
+            row.statement ||
+            (
+              row.system_type && row.event_year
+                ? `${row.system_type} update reported for ${row.event_year}`
+                : "Property history record"
+            ),
+
+          event_year:
+            row.event_year,
+
+          event_date:
+            row.event_date ||
+            row.created_at,
+
+          source_type:
+            isArmls
+              ? "armls_listing_history"
+              : (
+                  row.history_type ||
+                  "property_history_record"
+                ),
+
+          source_name:
+            row.source_name ||
+            (
+              isArmls
+                ? "ARMLS"
+                : "Property History"
+            ),
+
+          verification_status:
+            row.verification_status ||
+            (
+              isArmls
+                ? "listing_reported"
+                : "submitted"
+            )
+        },
+        {
+          propertyId,
+
+          category:
+            "Property History Record",
+
+          sourceType:
+            isArmls
+              ? "armls_listing_history"
+              : "property_history_record",
+
+          sourceName:
+            isArmls
+              ? "ARMLS"
+              : "Property History",
+
+          verificationStatus:
+            isArmls
+              ? "listing_reported"
+              : "submitted"
+        }
+      );
+    });
+
   return mergeUniqueRows(
     reportEntries,
     normalizedHistoryItems,
-    normalizedListingSources
+    normalizedListingSources,
+    normalizedPermanentHistoryRecords
   );
 }
 
@@ -1292,9 +1393,22 @@ function majorSystemSourceLevel(entry) {
       entry?.source_name
     );
 
+  const verificationStatus =
+    normalize(
+      entry?.verification_status
+    );
+
   const text =
     entryText(entry);
 
+  /*
+    Full-credit system knowledge:
+    - homeowner-reported system year
+    - documented / verified system year
+
+    The 5-point history credit means BlueVera knows the system year.
+    Supporting documents can still earn separate credit in Documents / 60.
+  */
   const homeowner =
     sourceType.includes("homeowner") ||
     sourceName.includes("homeowner") ||
@@ -1316,9 +1430,53 @@ function majorSystemSourceLevel(entry) {
     };
   }
 
+  const documented =
+    containsAny(
+      verificationStatus,
+      [
+        "verified",
+        "documented",
+        "permit_documented",
+        "contractor_documented",
+        "verified_by_document"
+      ]
+    ) ||
+    containsAny(
+      sourceType,
+      [
+        "contractor_record",
+        "permit_record"
+      ]
+    ) &&
+    containsAny(
+      text,
+      [
+        "documented",
+        "verified",
+        "receipt",
+        "invoice",
+        "permit"
+      ]
+    );
+
+  if (documented) {
+    return {
+      level: "documented",
+      label: "Documented / verified",
+      points: 5
+    };
+  }
+
+  /*
+    ARMLS/listing-only years receive partial history credit because
+    the year is source-reported and has not yet been independently
+    confirmed by the homeowner or supporting documentation.
+  */
   const listing =
     sourceType.includes("listing") ||
+    sourceType.includes("armls") ||
     sourceName.includes("armls") ||
+    verificationStatus === "listing_reported" ||
     containsAny(
       text,
       [
@@ -1354,7 +1512,8 @@ function calculateMajorSystemPoints(entries) {
       sourceLabel: "No year available",
       year: null,
       homeownerYear: null,
-      armlsYear: null
+      armlsYear: null,
+      documentedYear: null
     },
 
     roof: {
@@ -1365,7 +1524,8 @@ function calculateMajorSystemPoints(entries) {
       sourceLabel: "No year available",
       year: null,
       homeownerYear: null,
-      armlsYear: null
+      armlsYear: null,
+      documentedYear: null
     },
 
     waterHeater: {
@@ -1376,7 +1536,8 @@ function calculateMajorSystemPoints(entries) {
       sourceLabel: "No year available",
       year: null,
       homeownerYear: null,
-      armlsYear: null
+      armlsYear: null,
+      documentedYear: null
     },
 
     electrical: {
@@ -1387,7 +1548,8 @@ function calculateMajorSystemPoints(entries) {
       sourceLabel: "No year available",
       year: null,
       homeownerYear: null,
-      armlsYear: null
+      armlsYear: null,
+      documentedYear: null
     }
   };
 
@@ -1422,6 +1584,12 @@ function calculateMajorSystemPoints(entries) {
         current.armlsYear =
           year ||
           current.armlsYear;
+      }
+
+      if (source.level === "documented") {
+        current.documentedYear =
+          year ||
+          current.documentedYear;
       }
 
       if (
@@ -1654,7 +1822,7 @@ function calculateHistoryScore(
       majorSystemResult.systems,
 
     scoringRule:
-      "Each system is worth 5 points when a homeowner year is available, 2.5 points when only an ARMLS/listing-reported year is available, and 0 when no year is available."
+      "Each system is worth 5 points when a homeowner-reported or documented/verified year is available, 2.5 points when only an ARMLS/listing-reported year is available, and 0 when no year is available."
   };
 
   /*
