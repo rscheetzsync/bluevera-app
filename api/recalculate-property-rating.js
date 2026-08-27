@@ -23,7 +23,7 @@ const INTERNAL_API_KEY =
   "";
 
 const RATING_VERSION =
-  "bluevera-v4-authoritative-rating";
+  "bluevera-v5-property-knowledge-40-documents-60";
 
 function clean(value) {
   return String(value ?? "")
@@ -1143,79 +1143,333 @@ function hasDocumentMatching(
   );
 }
 
-function countUniqueSystems(
-  entries
-) {
+function majorSystemKey(entry) {
+  const text = entryText(entry);
+
+  if (
+    containsAny(
+      text,
+      [
+        "hvac",
+        "air conditioner",
+        "air conditioning",
+        "furnace",
+        "heat pump"
+      ]
+    )
+  ) {
+    return "hvac";
+  }
+
+  if (
+    containsAny(
+      text,
+      [
+        "roof",
+        "shingle",
+        "underlayment"
+      ]
+    )
+  ) {
+    return "roof";
+  }
+
+  if (
+    containsAny(
+      text,
+      [
+        "water heater",
+        "tankless"
+      ]
+    )
+  ) {
+    return "waterHeater";
+  }
+
+  if (
+    containsAny(
+      text,
+      [
+        "electrical panel",
+        "electrical",
+        "breaker panel",
+        "breaker"
+      ]
+    )
+  ) {
+    return "electrical";
+  }
+
+  return "";
+}
+
+function entryHasSystemYear(entry) {
+  const directYear =
+    Number(
+      entry?.event_year ||
+      entry?.year ||
+      0
+    );
+
+  if (
+    Number.isFinite(directYear) &&
+    directYear >= 1900 &&
+    directYear <= 2100
+  ) {
+    return true;
+  }
+
+  const text =
+    clean(
+      [
+        entry?.statement,
+        entry?.description,
+        entry?.note,
+        entry?.event_date,
+        entry?.approximate_date,
+        entry?.completed_date
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  const yearMatch =
+    text.match(
+      /\b(19\d{2}|20\d{2}|2100)\b/
+    );
+
+  return Boolean(yearMatch);
+}
+
+function entrySystemYear(entry) {
+  const directYear =
+    Number(
+      entry?.event_year ||
+      entry?.year ||
+      0
+    );
+
+  if (
+    Number.isFinite(directYear) &&
+    directYear >= 1900 &&
+    directYear <= 2100
+  ) {
+    return Math.round(directYear);
+  }
+
+  const text =
+    clean(
+      [
+        entry?.statement,
+        entry?.description,
+        entry?.note,
+        entry?.event_date,
+        entry?.approximate_date,
+        entry?.completed_date
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  const match =
+    text.match(
+      /\b(19\d{2}|20\d{2}|2100)\b/
+    );
+
+  return match
+    ? Number(match[1])
+    : null;
+}
+
+function majorSystemSourceLevel(entry) {
+  const sourceType =
+    normalize(
+      entry?.source_type
+    );
+
+  const sourceName =
+    normalize(
+      entry?.source_name
+    );
+
+  const text =
+    entryText(entry);
+
+  const homeowner =
+    sourceType.includes("homeowner") ||
+    sourceName.includes("homeowner") ||
+    containsAny(
+      text,
+      [
+        "homeowner submitted",
+        "homeowner reported",
+        "owner reported",
+        "owner update"
+      ]
+    );
+
+  if (homeowner) {
+    return {
+      level: "homeowner",
+      label: "Homeowner reported",
+      points: 5
+    };
+  }
+
+  const listing =
+    sourceType.includes("listing") ||
+    sourceName.includes("armls") ||
+    containsAny(
+      text,
+      [
+        "armls",
+        "listing claim",
+        "listing update",
+        "public listing history"
+      ]
+    );
+
+  if (listing) {
+    return {
+      level: "armls",
+      label: "ARMLS / listing reported",
+      points: 2.5
+    };
+  }
+
+  return {
+    level: "other",
+    label: "Other property record",
+    points: 0
+  };
+}
+
+function calculateMajorSystemPoints(entries) {
   const systems = {
-    roof: [
-      "roof",
-      "shingle",
-      "underlayment"
-    ],
+    hvac: {
+      label: "HVAC",
+      maximum: 5,
+      points: 0,
+      source: "none",
+      sourceLabel: "No year available",
+      year: null,
+      homeownerYear: null,
+      armlsYear: null
+    },
 
-    hvac: [
-      "hvac",
-      "air conditioner",
-      "air conditioning",
-      "furnace",
-      "heat pump"
-    ],
+    roof: {
+      label: "Roof",
+      maximum: 5,
+      points: 0,
+      source: "none",
+      sourceLabel: "No year available",
+      year: null,
+      homeownerYear: null,
+      armlsYear: null
+    },
 
-    waterHeater: [
-      "water heater",
-      "tankless"
-    ],
+    waterHeater: {
+      label: "Water Heater",
+      maximum: 5,
+      points: 0,
+      source: "none",
+      sourceLabel: "No year available",
+      year: null,
+      homeownerYear: null,
+      armlsYear: null
+    },
 
-    electrical: [
-      "electrical",
-      "panel",
-      "breaker"
-    ],
-
-    plumbing: [
-      "plumbing",
-      "sewer",
-      "pipe",
-      "water line"
-    ],
-
-    pool: [
-      "pool",
-      "spa"
-    ],
-
-    solar: [
-      "solar",
-      "photovoltaic"
-    ]
+    electrical: {
+      label: "Electrical Panel",
+      maximum: 5,
+      points: 0,
+      source: "none",
+      sourceLabel: "No year available",
+      year: null,
+      homeownerYear: null,
+      armlsYear: null
+    }
   };
 
-  const found =
-    new Set();
+  (Array.isArray(entries) ? entries : [])
+    .forEach(entry => {
+      const systemKey =
+        majorSystemKey(entry);
 
-  entries.forEach(
-    entry => {
-      const text =
-        entryText(entry);
+      if (
+        !systemKey ||
+        !entryHasSystemYear(entry)
+      ) {
+        return;
+      }
 
-      Object.entries(
-        systems
-      ).forEach(
-        ([system, terms]) => {
-          if (
-            containsAny(
-              text,
-              terms
-            )
-          ) {
-            found.add(system);
-          }
-        }
-      );
-    }
-  );
+      const year =
+        entrySystemYear(entry);
 
-  return found.size;
+      const source =
+        majorSystemSourceLevel(entry);
+
+      const current =
+        systems[systemKey];
+
+      if (source.level === "homeowner") {
+        current.homeownerYear =
+          year ||
+          current.homeownerYear;
+      }
+
+      if (source.level === "armls") {
+        current.armlsYear =
+          year ||
+          current.armlsYear;
+      }
+
+      if (
+        source.points >
+        current.points
+      ) {
+        current.points =
+          source.points;
+
+        current.source =
+          source.level;
+
+        current.sourceLabel =
+          source.label;
+
+        current.year =
+          year;
+      }
+    });
+
+  const score =
+    Object.values(
+      systems
+    ).reduce(
+      (total, system) =>
+        total +
+        Number(
+          system.points || 0
+        ),
+      0
+    );
+
+  const completedSystems =
+    Object.values(
+      systems
+    ).filter(
+      system =>
+        Number(
+          system.points || 0
+        ) > 0
+    ).length;
+
+  return {
+    score,
+    maximum: 20,
+    count: completedSystems,
+    systems
+  };
 }
 
 function calculatePermitPoints(
@@ -1283,19 +1537,21 @@ function calculatePermitPoints(
         )
       : permitEntries.length;
 
-  let points = 0;
+  let observedPoints = 0;
 
   if (count >= 11) {
-    points = 9;
+    observedPoints = 9;
   } else if (count >= 6) {
-    points = 6;
+    observedPoints = 6;
   } else if (count >= 1) {
-    points = 3;
+    observedPoints = 3;
   }
 
   return {
-    points,
-    maximum: 9,
+    points: 0,
+    maximum: 0,
+    observedPoints,
+    observedMaximum: 9,
     count,
 
     status:
@@ -1376,6 +1632,39 @@ function calculateHistoryScore(
       coreFields
   };
 
+  const majorSystemResult =
+    calculateMajorSystemPoints(
+      entries
+    );
+
+  breakdown.majorSystems = {
+    label:
+      "Major system years",
+
+    score:
+      majorSystemResult.score,
+
+    maximum:
+      20,
+
+    count:
+      majorSystemResult.count,
+
+    systems:
+      majorSystemResult.systems,
+
+    scoringRule:
+      "Each system is worth 5 points when a homeowner year is available, 2.5 points when only an ARMLS/listing-reported year is available, and 0 when no year is available."
+  };
+
+  /*
+    The following history signals remain available in the rating
+    breakdown for diagnostics and transparency, but they no longer
+    add points to History / 40. History / 40 is now intentionally:
+      20 points = core property record
+      20 points = HVAC, roof, water heater, electrical panel years
+  */
+
   const permitResult =
     calculatePermitPoints(
       entries,
@@ -1384,13 +1673,19 @@ function calculateHistoryScore(
 
   breakdown.permitInformation = {
     label:
-      "Permit information",
+      "Permit information (diagnostic only)",
 
     score:
-      permitResult.points,
+      0,
 
     maximum:
-      9,
+      0,
+
+    observedScore:
+      permitResult.observedPoints,
+
+    observedMaximum:
+      permitResult.observedMaximum,
 
     count:
       permitResult.count,
@@ -1422,18 +1717,19 @@ function calculateHistoryScore(
 
   breakdown.publicListingRemarks = {
     label:
-      "Public listing remarks entered",
+      "Public listing remarks (diagnostic only)",
 
     score:
-      listingEntries.length > 0
-        ? 3
-        : 0,
+      0,
 
     maximum:
-      3,
+      0,
 
     count:
-      listingEntries.length
+      listingEntries.length,
+
+    observed:
+      listingEntries.length > 0
   };
 
   const datedEntries =
@@ -1447,40 +1743,19 @@ function calculateHistoryScore(
 
   breakdown.datedInformation = {
     label:
-      "Listing remarks include dates",
+      "Dated listing information (diagnostic only)",
 
     score:
+      0,
+
+    maximum:
+      0,
+
+    count:
+      datedEntries.length,
+
+    observed:
       datedEntries.length > 0
-        ? 2
-        : 0,
-
-    maximum:
-      2,
-
-    count:
-      datedEntries.length
-  };
-
-  const systemsFound =
-    countUniqueSystems(
-      entries
-    );
-
-  breakdown.majorSystems = {
-    label:
-      "Major systems mentioned",
-
-    score:
-      Math.min(
-        3,
-        systemsFound
-      ),
-
-    maximum:
-      3,
-
-    count:
-      systemsFound
   };
 
   const homeownerEntries =
@@ -1533,36 +1808,15 @@ function calculateHistoryScore(
         )
     );
 
-  let contributorPoints = 0;
-
-  if (
-    homeownerEntries.length
-  ) {
-    contributorPoints += 1;
-  }
-
-  if (
-    contractorEntries.length
-  ) {
-    contributorPoints += 1;
-  }
-
-  if (
-    inspectorEntries.length ||
-    warrantyEntries.length
-  ) {
-    contributorPoints += 1;
-  }
-
   breakdown.contributorRecords = {
     label:
-      "Contributor records",
+      "Contributor records (diagnostic only)",
 
     score:
-      contributorPoints,
+      0,
 
     maximum:
-      3,
+      0,
 
     counts: {
       homeowner:
@@ -1581,16 +1835,8 @@ function calculateHistoryScore(
 
   const score =
     clamp(
-      Object.values(
-        breakdown
-      ).reduce(
-        (total, item) =>
-          total +
-          Number(
-            item.score || 0
-          ),
-        0
-      ),
+      propertyRecordPoints +
+      majorSystemResult.score,
       0,
       40
     );
@@ -1647,10 +1893,10 @@ function calculateDocumentScore(
         12,
 
       terms: [
-  "inspection report",
-  "home inspection",
-  "inspection page"
-]
+        "inspection report",
+        "home inspection",
+        "inspection page"
+      ]
     },
 
     {
@@ -1861,47 +2107,35 @@ function buildImprovementItems(
 
   if (
     history
-      .permitInformation
-      .score <
-    history
-      .permitInformation
-      .maximum
-  ) {
-    items.push(
-      "Add available permit records or final inspection approvals."
-    );
-  }
-
-  if (
-    history
-      .publicListingRemarks
-      .score === 0
-  ) {
-    items.push(
-      "Add public listing remarks or a listing information source."
-    );
-  }
-
-  if (
-    history
-      .datedInformation
-      .score === 0
-  ) {
-    items.push(
-      "Add dates for repairs, replacements, and improvements."
-    );
-  }
-
-  if (
-    history
       .majorSystems
       .score <
     history
       .majorSystems
       .maximum
   ) {
+    const missingSystems =
+      Object.values(
+        history
+          .majorSystems
+          .systems ||
+        {}
+      )
+        .filter(
+          system =>
+            Number(
+              system?.points || 0
+            ) < 5
+        )
+        .map(
+          system =>
+            system?.label
+        )
+        .filter(Boolean);
+
     items.push(
-      "Add records for major systems such as the roof, HVAC, water heater, electrical panel, or plumbing."
+      missingSystems.length
+        ? `Add or confirm homeowner years for: ${missingSystems.join(", ")}.`
+        : "Add or confirm homeowner years for the four major systems."
     );
   }
 
@@ -2446,6 +2680,18 @@ export default async function handler(
               .breakdown
               .majorSystems
               .score,
+
+          majorSystemsMax:
+            historyResult
+              .breakdown
+              .majorSystems
+              .maximum,
+
+          majorSystemDetails:
+            historyResult
+              .breakdown
+              .majorSystems
+              .systems,
 
           contributorRecords:
             historyResult
