@@ -82,8 +82,8 @@ export default async function handler(req, res) {
       as proof of active subscriber status.
     */
 
-   const filter =
-  `LoginName Eq '${safeLoginName}' And UserType Eq 'Member'`;
+  const filter =
+  `UserType Eq 'Member' And ShortId Eq '${safeLoginName}'`
 
     const sparkUrl =
       `${SPARK_BASE}/accounts` +
