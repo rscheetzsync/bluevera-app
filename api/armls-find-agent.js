@@ -1,4 +1,5 @@
-const SPARK_BASE = "https://replication.sparkapi.com/v1";
+const SPARK_BASE =
+  "https://replication.sparkapi.com/v1";
 
 const SPARK_TOKEN =
   process.env.SPARK_ACCESS_TOKEN || "";
@@ -10,10 +11,14 @@ function clean(value) {
 }
 
 function escapeSparkString(value) {
-  return clean(value).replace(/'/g, "''");
+  return clean(value)
+    .replace(/'/g, "''");
 }
 
-export default async function handler(req, res) {
+export default async function handler(
+  req,
+  res
+) {
   res.setHeader(
     "Content-Type",
     "application/json"
@@ -34,7 +39,7 @@ export default async function handler(req, res) {
     }
 
     /*
-      READ-ONLY ARMLS AGENT FINDER
+      READ-ONLY ARMLS MEMBER FINDER
 
       Examples:
 
@@ -42,9 +47,11 @@ export default async function handler(req, res) {
 
       /api/armls-find-agent?firstName=Christy&lastName=Walker
 
+      /api/armls-find-agent?shortId=pm1070
+
       This endpoint does NOT:
       - write to Supabase
-      - change any BlueVera agent
+      - modify BlueVera agents
       - grant ARMLS access
       - modify Spark data
     */
@@ -69,26 +76,52 @@ export default async function handler(req, res) {
         ""
       );
 
+    const shortId =
+      clean(
+        req.query?.shortId ||
+        req.query?.shortid ||
+        req.query?.mlsId ||
+        req.query?.mlsid ||
+        ""
+      );
+
     if (
       !email &&
       !firstName &&
-      !lastName
+      !lastName &&
+      !shortId
     ) {
       return res.status(400).json({
         success: false,
         error:
-          "Provide email or agent first/last name."
+          "Provide email, first/last name, or ARMLS ShortID."
       });
     }
 
     let filter = "";
 
-    if (email) {
+    /*
+      Spark Accounts API requires UserType
+      in the filter.
+
+      We are looking for ARMLS members,
+      so UserType = Member.
+    */
+
+    if (shortId) {
+      const safeShortId =
+        escapeSparkString(shortId);
+
+      filter =
+        `UserType Eq 'Member' And ShortId Eq '${safeShortId}'`;
+
+    } else if (email) {
       const safeEmail =
         escapeSparkString(email);
 
       filter =
-        `PrimaryEmail Eq '${safeEmail}'`;
+        `UserType Eq 'Member' And Email Eq '${safeEmail}'`;
+
     } else if (
       firstName &&
       lastName
@@ -100,23 +133,25 @@ export default async function handler(req, res) {
         escapeSparkString(lastName);
 
       filter =
-        `GivenName Eq '${safeFirstName}' And FamilyName Eq '${safeLastName}'`;
+        `UserType Eq 'Member' And FirstName Eq '${safeFirstName}' And LastName Eq '${safeLastName}'`;
+
     } else if (lastName) {
       const safeLastName =
         escapeSparkString(lastName);
 
       filter =
-        `FamilyName Eq '${safeLastName}'`;
+        `UserType Eq 'Member' And LastName Eq '${safeLastName}'`;
+
     } else {
       const safeFirstName =
         escapeSparkString(firstName);
 
       filter =
-        `GivenName Eq '${safeFirstName}'`;
+        `UserType Eq 'Member' And FirstName Eq '${safeFirstName}'`;
     }
 
     const sparkUrl =
-      `${SPARK_BASE}/contacts` +
+      `${SPARK_BASE}/accounts` +
       `?_filter=${encodeURIComponent(filter)}` +
       `&_limit=25`;
 
@@ -147,8 +182,10 @@ export default async function handler(req, res) {
     } catch {
       return res.status(502).json({
         success: false,
+
         error:
           "Spark returned invalid JSON.",
+
         raw:
           sparkText
       });
@@ -163,7 +200,7 @@ export default async function handler(req, res) {
           error:
             sparkData?.D?.Message ||
             sparkData?.message ||
-            "Spark contact request failed.",
+            "Spark account request failed.",
 
           sparkResponse:
             sparkData
@@ -178,53 +215,57 @@ export default async function handler(req, res) {
         : [];
 
     const simplified =
-      results.map((contact) => ({
-        id:
-          contact?.Id ?? null,
+      results.map(
+        (account) => ({
+          id:
+            account?.Id ??
+            null,
 
-        shortId:
-          contact?.MlsId ??
-          contact?.ShortId ??
-          null,
+          shortId:
+            account?.ShortId ??
+            null,
 
-        firstName:
-          contact?.GivenName ??
-          contact?.FirstName ??
-          null,
+          firstName:
+            account?.FirstName ??
+            null,
 
-        lastName:
-          contact?.FamilyName ??
-          contact?.LastName ??
-          null,
+          lastName:
+            account?.LastName ??
+            null,
 
-        displayName:
-          contact?.DisplayName ??
-          null,
+          email:
+            account?.Email ??
+            account?.PrimaryEmail ??
+            null,
 
-        email:
-          contact?.PrimaryEmail ??
-          contact?.Email ??
-          null,
+          active:
+            account?.Active === true,
 
-        officeId:
-          contact?.OfficeId ??
-          contact?.Office?.Id ??
-          null,
+          officeId:
+            account?.OfficeId ??
+            account?.Office?.Id ??
+            null,
 
-        officeName:
-          contact?.OfficeName ??
-          contact?.Office?.Name ??
-          null,
+          officeShortId:
+            account?.OfficeShortId ??
+            account?.Office?.ShortId ??
+            null,
 
-        raw:
-          contact
-      }));
+          loginName:
+            account?.LoginName ??
+            null,
+
+          userType:
+            account?.UserType ??
+            null
+        })
+      );
 
     return res.status(200).json({
       success: true,
 
       mode:
-        "ARMLS_AGENT_FINDER_READ_ONLY",
+        "ARMLS_ACCOUNT_FINDER_READ_ONLY",
 
       search: {
         email:
@@ -234,7 +275,10 @@ export default async function handler(req, res) {
           firstName || null,
 
         lastName:
-          lastName || null
+          lastName || null,
+
+        shortId:
+          shortId || null
       },
 
       count:
@@ -246,7 +290,7 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error(
-      "ARMLS agent finder failed:",
+      "ARMLS account finder failed:",
       error
     );
 
@@ -255,7 +299,7 @@ export default async function handler(req, res) {
 
       error:
         error?.message ||
-        "ARMLS agent finder failed."
+        "ARMLS account finder failed."
     });
   }
 }
