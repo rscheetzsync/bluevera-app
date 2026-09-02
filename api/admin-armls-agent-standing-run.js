@@ -829,9 +829,8 @@ export default async function handler(
       For now we are ONLY enabling the
       New / Changed workflow.
 
-      We are deliberately keeping the
-      Full Standing Check disabled until
-      this smaller batch is proven.
+      Full Standing Check remains disabled
+      until this workflow is fully proven.
     */
 
     if (mode !== "changed") {
@@ -856,17 +855,11 @@ export default async function handler(
 
 
     /*
-      Safety limit for a single Vercel request.
-
-      This is fine for BlueVera's current
-      small agent count.
-
-      We will convert this to a queued
-      background process before large-scale
-      deployment.
+      Safety limit for one Vercel request.
     */
 
     const MAX_PER_RUN = 25;
+
 
     const batch =
       candidates.slice(
@@ -880,9 +873,8 @@ export default async function handler(
 
     /*
       Sequential verification is intentional.
-
-      It avoids blasting Spark with a large
-      burst of simultaneous requests.
+      It avoids sending a large burst of
+      requests to Spark.
     */
 
     for (const agent of batch) {
@@ -962,28 +954,58 @@ export default async function handler(
       ).length;
 
 
+    const candidateCount =
+      candidates.length;
+
+
+    const attemptedCount =
+      batch.length;
+
+
+    const processedCount =
+      results.length;
+
+
+    const successfulCount =
+      results.filter(
+        (item) =>
+          item.status !==
+          "error"
+      ).length;
+
+
+    const remainingCount =
+      Math.max(
+        0,
+        candidateCount -
+        attemptedCount
+      );
+
+
     return res.status(200).json({
       success:
         true,
 
       message:
-        `ARMLS verification completed for ${results.length} agent(s).`,
+        `ARMLS check complete — ${processedCount} of ${candidateCount} agent(s) processed. ${activeCount} active, ${inactiveCount} inactive, ${notFoundCount} not found, ${reviewCount} need review, ${errorCount} error(s).`,
 
       mode:
         "changed",
 
       candidates:
-        candidates.length,
+        candidateCount,
+
+      attempted:
+        attemptedCount,
 
       processed:
-        results.length,
+        processedCount,
+
+      successful:
+        successfulCount,
 
       remaining:
-        Math.max(
-          0,
-          candidates.length -
-          results.length
-        ),
+        remainingCount,
 
       active:
         activeCount,
