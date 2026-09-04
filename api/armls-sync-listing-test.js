@@ -1,38 +1,25 @@
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: "1mb"
-    }
-  }
-};
-
-const DEFAULT_MLS_NUMBER = "7045718";
-
-const SPARK_BASE =
-  "https://replication.sparkapi.com/v1";
-
-const SUPABASE_URL =
-  String(process.env.SUPABASE_URL || "")
-    .replace(/\/+$/, "");
-
-const SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SECRET_KEY ||
-  "";
-
-const SPARK_TOKEN =
-  process.env.SPARK_ACCESS_TOKEN ||
-  "";
-
+import crypto from "crypto";
 
 /* ============================================================
    BASIC HELPERS
 ============================================================ */
 
 function clean(value) {
-  return String(value ?? "")
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return "";
+  }
+
+  return String(value)
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function digitsOnly(value) {
+  return clean(value)
+    .replace(/\D/g, "");
 }
 
 function normalizeApn(value) {
@@ -43,68 +30,156 @@ function normalizeApn(value) {
 
 function normalizeAddress(value) {
   return clean(value)
-    .toLowerCase()
-    .replace(/[.,#]/g, " ")
-    .replace(/\bwest\b/g, "w")
-    .replace(/\beast\b/g, "e")
-    .replace(/\bnorth\b/g, "n")
-    .replace(/\bsouth\b/g, "s")
-    .replace(/\bstreet\b/g, "st")
-    .replace(/\bavenue\b/g, "ave")
-    .replace(/\broad\b/g, "rd")
-    .replace(/\bdrive\b/g, "dr")
-    .replace(/\blane\b/g, "ln")
-    .replace(/\bboulevard\b/g, "blvd")
-    .replace(/\bcourt\b/g, "ct")
-    .replace(/\bplace\b/g, "pl")
-    .replace(/\bcircle\b/g, "cir")
-    .replace(/\bterrace\b/g, "ter")
-    .replace(/\bparkway\b/g, "pkwy")
-    .replace(/\barizona\b/g, "az")
+    .toUpperCase()
+    .replace(/\./g, "")
+    .replace(/,/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/\bWEST\b/g, "W")
+    .replace(/\bEAST\b/g, "E")
+    .replace(/\bNORTH\b/g, "N")
+    .replace(/\bSOUTH\b/g, "S")
+    .replace(/\bAVENUE\b/g, "AVE")
+    .replace(/\bSTREET\b/g, "ST")
+    .replace(/\bDRIVE\b/g, "DR")
+    .replace(/\bROAD\b/g, "RD")
+    .replace(/\bBOULEVARD\b/g, "BLVD")
+    .replace(/\bPLACE\b/g, "PL")
+    .replace(/\bCOURT\b/g, "CT")
+    .replace(/\bCIRCLE\b/g, "CIR")
+    .replace(/\bLANE\b/g, "LN")
     .trim();
 }
 
-function validYear(value) {
-  const year = Number(clean(value));
+function toNumberOrNull(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
 
-  const currentYear =
-    new Date().getFullYear();
+  const number =
+    Number(value);
 
-  return (
-    Number.isInteger(year) &&
-    year >= 1800 &&
-    year <= currentYear + 1
-  );
+  return Number.isFinite(number)
+    ? number
+    : null;
 }
 
-function dateOnly(value) {
-  const text = clean(value);
+function toIntegerOrNull(value) {
+  const number =
+    toNumberOrNull(value);
+
+  if (number === null) {
+    return null;
+  }
+
+  return Math.trunc(number);
+}
+
+function safeDate(value) {
+  const text =
+    clean(value);
 
   if (!text) {
     return null;
   }
 
-  const parsed =
+  const date =
     new Date(text);
 
   if (
     Number.isNaN(
-      parsed.getTime()
+      date.getTime()
     )
   ) {
     return null;
   }
 
-  return parsed
-    .toISOString()
-    .slice(0, 10);
+  return date
+    .toISOString();
+}
+
+function isReasonableYear(value) {
+  const year =
+    Number(value);
+
+  const currentYear =
+    new Date()
+      .getFullYear();
+
+  return (
+    Number.isInteger(year) &&
+    year >= 1900 &&
+    year <= currentYear + 1
+  );
+}
+
+function randomUuid() {
+  if (
+    typeof crypto.randomUUID ===
+    "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return [
+    crypto.randomBytes(4)
+      .toString("hex"),
+    crypto.randomBytes(2)
+      .toString("hex"),
+    "4" +
+      crypto.randomBytes(2)
+        .toString("hex")
+        .slice(1),
+    (
+      (
+        parseInt(
+          crypto.randomBytes(1)
+            .toString("hex"),
+          16
+        ) &
+        0x3f
+      ) |
+      0x80
+    )
+      .toString(16) +
+      crypto.randomBytes(1)
+        .toString("hex"),
+    crypto.randomBytes(6)
+      .toString("hex")
+  ].join("-");
 }
 
 
 /* ============================================================
    SUPABASE
 ============================================================ */
+
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
+
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY;
+
+function getSupabaseHeaders(
+  extra = {}
+) {
+  return {
+    "Content-Type":
+      "application/json",
+
+    apikey:
+      SUPABASE_SECRET_KEY,
+
+    Authorization:
+      `Bearer ${SUPABASE_SECRET_KEY}`,
+
+    ...extra
+  };
+}
 
 async function supabaseRequest(
   path,
@@ -116,18 +191,10 @@ async function supabaseRequest(
       {
         ...options,
 
-        headers: {
-          apikey:
-            SERVICE_KEY,
-
-          Authorization:
-            `Bearer ${SERVICE_KEY}`,
-
-          "Content-Type":
-            "application/json",
-
-          ...(options.headers || {})
-        }
+        headers:
+          getSupabaseHeaders(
+            options.headers || {}
+          )
       }
     );
 
@@ -136,33 +203,24 @@ async function supabaseRequest(
 
   let data = null;
 
-  try {
-    data =
-      text
-        ? JSON.parse(text)
-        : null;
-  } catch {
-    data = text;
+  if (text) {
+    try {
+      data =
+        JSON.parse(text);
+    } catch {
+      data =
+        text;
+    }
   }
 
   if (!response.ok) {
-    const error =
-      new Error(
-        data?.message ||
-        data?.error ||
-        data?.details ||
-        data?.hint ||
-        text ||
-        `Supabase request failed (${response.status})`
-      );
-
-    error.status =
-      response.status;
-
-    error.data =
-      data;
-
-    throw error;
+    throw new Error(
+      `Supabase ${response.status}: ${
+        typeof data === "string"
+          ? data
+          : JSON.stringify(data)
+      }`
+    );
   }
 
   return data;
@@ -170,222 +228,449 @@ async function supabaseRequest(
 
 
 /* ============================================================
-   ARMLS CUSTOM FIELD SEARCH
+   SPARK / ARMLS
 ============================================================ */
 
-function findCustomField(
-  customFields,
-  label
+const SPARK_BASE_URL =
+  "https://replication.sparkapi.com/v1";
+
+async function fetchSparkListing(
+  mlsNumber
 ) {
-  function search(value) {
-    if (
-      value === null ||
-      value === undefined
-    ) {
-      return null;
-    }
+  const SPARK_ACCESS_TOKEN =
+    process.env.SPARK_ACCESS_TOKEN;
 
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const found =
-          search(item);
+  if (!SPARK_ACCESS_TOKEN) {
+    throw new Error(
+      "Missing SPARK_ACCESS_TOKEN"
+    );
+  }
 
-        if (found !== null) {
-          return found;
+  const url =
+    `${SPARK_BASE_URL}/listings` +
+    `?_filter=${encodeURIComponent(
+      `ListingId Eq '${mlsNumber}'`
+    )}` +
+    `&_limit=1`;
+
+  const response =
+    await fetch(
+      url,
+      {
+        method:
+          "GET",
+
+        headers: {
+          Authorization:
+            `Bearer ${SPARK_ACCESS_TOKEN}`,
+
+          Accept:
+            "application/json"
         }
       }
+    );
 
-      return null;
+  const data =
+    await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      `Spark ${response.status}: ${JSON.stringify(
+        data
+      )}`
+    );
+  }
+
+  const result =
+    Array.isArray(data?.D?.Results)
+      ? data.D.Results[0]
+      : Array.isArray(data?.Results)
+        ? data.Results[0]
+        : null;
+
+  if (!result) {
+    return null;
+  }
+
+  return result;
+}
+
+
+/* ============================================================
+   EXTRACT STRUCTURED ARMLS UPDATE FIELDS
+============================================================ */
+
+function flattenCustomFields(
+  customFields
+) {
+  const result = {};
+
+  if (
+    !Array.isArray(customFields)
+  ) {
+    return result;
+  }
+
+  for (
+    const group
+    of customFields
+  ) {
+    if (!group) {
+      continue;
     }
 
-    if (
-      typeof value === "object"
+    const main =
+      Array.isArray(group.Main)
+        ? group.Main
+        : [];
+
+    for (
+      const section
+      of main
     ) {
       if (
-        Object.prototype
-          .hasOwnProperty.call(
-            value,
-            label
-          )
+        !section ||
+        typeof section !== "object"
       ) {
-        return value[label];
+        continue;
       }
 
       for (
-        const child
-        of Object.values(value)
+        const [
+          key,
+          value
+        ]
+        of Object.entries(
+          section
+        )
       ) {
-        const found =
-          search(child);
-
-        if (found !== null) {
-          return found;
-        }
+        result[key] =
+          value;
       }
+    }
+  }
+
+  return result;
+}
+
+function findCustomFieldValue(
+  flattened,
+  candidates
+) {
+  const entries =
+    Object.entries(
+      flattened
+    );
+
+  for (
+    const candidate
+    of candidates
+  ) {
+    const target =
+      clean(candidate)
+        .toLowerCase();
+
+    for (
+      const [
+        key,
+        value
+      ]
+      of entries
+    ) {
+      if (
+        clean(key)
+          .toLowerCase() ===
+        target
+      ) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseUpdateField(
+  rawValue
+) {
+  if (
+    rawValue === null ||
+    rawValue === undefined
+  ) {
+    return null;
+  }
+
+  if (
+    typeof rawValue === "number"
+  ) {
+    const year =
+      Math.trunc(rawValue);
+
+    if (
+      isReasonableYear(year)
+    ) {
+      return {
+        year,
+        scope:
+          null
+      };
     }
 
     return null;
   }
 
-  return search(customFields);
+  if (
+    typeof rawValue === "string"
+  ) {
+    const text =
+      clean(rawValue);
+
+    if (!text) {
+      return null;
+    }
+
+    const yearMatch =
+      text.match(
+        /\b(19\d{2}|20\d{2})\b/
+      );
+
+    const year =
+      yearMatch
+        ? Number(
+            yearMatch[1]
+          )
+        : null;
+
+    if (
+      !isReasonableYear(year)
+    ) {
+      return null;
+    }
+
+    let scope =
+      null;
+
+    if (
+      /\bfull\b/i.test(
+        text
+      )
+    ) {
+      scope =
+        "Full";
+    } else if (
+      /\bpartial\b/i.test(
+        text
+      )
+    ) {
+      scope =
+        "Partial";
+    }
+
+    return {
+      year,
+      scope
+    };
+  }
+
+  if (
+    typeof rawValue === "object"
+  ) {
+    const possibleYear =
+      rawValue.Year ??
+      rawValue.year ??
+      rawValue.UpdateYear ??
+      rawValue.updateYear ??
+      rawValue.Value ??
+      rawValue.value ??
+      null;
+
+    const possibleScope =
+      rawValue.Scope ??
+      rawValue.scope ??
+      rawValue.UpdateScope ??
+      rawValue.updateScope ??
+      null;
+
+    const year =
+      toIntegerOrNull(
+        possibleYear
+      );
+
+    if (
+      !isReasonableYear(year)
+    ) {
+      return null;
+    }
+
+    let scope =
+      clean(
+        possibleScope
+      );
+
+    if (!scope) {
+      scope =
+        null;
+    }
+
+    return {
+      year,
+      scope
+    };
+  }
+
+  return null;
 }
-
-
-/* ============================================================
-   EXTRACT ARMLS LISTING UPDATE YEARS
-============================================================ */
 
 function extractUpdates(
   customFields
 ) {
-  const raw = {
-    flooring: {
-      year:
-        findCustomField(
-          customFields,
-          "Floor Yr Updated"
-        ),
+  const flattened =
+    flattenCustomFields(
+      customFields
+    );
 
-      scope:
-        findCustomField(
-          customFields,
-          "Floor Partial/Full"
-        )
+  const definitions = [
+    {
+      systemType:
+        "flooring",
+
+      candidates: [
+        "Flooring Updated",
+        "Flooring Update",
+        "Flooring Year",
+        "Flooring"
+      ]
     },
 
-    electrical: {
-      year:
-        findCustomField(
-          customFields,
-          "Wiring Yr Updated"
-        ),
+    {
+      systemType:
+        "electrical",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Wiring Partial/Full"
-        )
+      candidates: [
+        "Electrical Updated",
+        "Electrical Update",
+        "Electrical Year",
+        "Wiring Updated",
+        "Wiring Update",
+        "Wiring Year"
+      ]
     },
 
-    plumbing: {
-      year:
-        findCustomField(
-          customFields,
-          "Plmbg Yr Updated"
-        ),
+    {
+      systemType:
+        "plumbing",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Plmbg Partial/Full"
-        )
+      candidates: [
+        "Plumbing Updated",
+        "Plumbing Update",
+        "Plumbing Year"
+      ]
     },
 
-    hvac: {
-      year:
-        findCustomField(
-          customFields,
-          "Ht/Cool Yr Updated"
-        ),
+    {
+      systemType:
+        "hvac",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Ht/Cool Partial/Full"
-        )
+      candidates: [
+        "HVAC Updated",
+        "HVAC Update",
+        "HVAC Year",
+        "Heating Cooling Updated",
+        "Heating/Cooling Updated"
+      ]
     },
 
-    roof: {
-      year:
-        findCustomField(
-          customFields,
-          "Roof Yr Updated"
-        ),
+    {
+      systemType:
+        "roof",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Roof Partial/Full"
-        )
+      candidates: [
+        "Roof Updated",
+        "Roof Update",
+        "Roof Year"
+      ]
     },
 
-    kitchen: {
-      year:
-        findCustomField(
-          customFields,
-          "Kitchen Yr Updated"
-        ),
+    {
+      systemType:
+        "kitchen",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Kitchen Partial/Full"
-        )
+      candidates: [
+        "Kitchen Updated",
+        "Kitchen Update",
+        "Kitchen Year"
+      ]
     },
 
-    bathrooms: {
-      year:
-        findCustomField(
-          customFields,
-          "Bath(s) Yr Updated"
-        ),
+    {
+      systemType:
+        "bathrooms",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Bath(s) Partial/Full"
-        )
+      candidates: [
+        "Bath Updated",
+        "Bath Update",
+        "Bath Year",
+        "Bathroom Updated",
+        "Bathrooms Updated"
+      ]
     },
 
-    room_addition: {
-      year:
-        findCustomField(
-          customFields,
-          "Rm Adtn Yr Updated"
-        ),
+    {
+      systemType:
+        "room_addition",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Rm Adtn Partial/Full"
-        )
+      candidates: [
+        "Room Addition Updated",
+        "Room Addition",
+        "Addition Updated",
+        "Addition Year"
+      ]
     },
 
-    pool: {
-      year:
-        findCustomField(
-          customFields,
-          "Pool Yr Updated"
-        ),
+    {
+      systemType:
+        "pool",
 
-      scope:
-        findCustomField(
-          customFields,
-          "Pool Partial/Full"
-        )
+      candidates: [
+        "Pool Updated",
+        "Pool Update",
+        "Pool Year"
+      ]
     }
-  };
+  ];
 
   const result = {};
 
   for (
-    const [
-      systemType,
-      item
-    ]
-    of Object.entries(raw)
+    const definition
+    of definitions
   ) {
-    if (!validYear(item.year)) {
+    const rawValue =
+      findCustomFieldValue(
+        flattened,
+        definition.candidates
+      );
+
+    const parsed =
+      parseUpdateField(
+        rawValue
+      );
+
+    if (!parsed) {
       continue;
     }
 
-    result[systemType] = {
+    result[
+      definition.systemType
+    ] = {
+      systemType:
+        definition.systemType,
+
       year:
-        Number(item.year),
+        parsed.year,
 
       scope:
-        clean(item.scope) ||
-        null
+        parsed.scope
     };
   }
 
@@ -394,83 +679,370 @@ function extractUpdates(
 
 
 /* ============================================================
-   ADDRESS HELPERS
+   SCAN ARMLS PUBLIC REMARKS
+
+   IMPORTANT:
+   - This scanner is deterministic. No outside AI is used.
+   - These are listing-reported signals, normally without a year.
+   - Structured ARMLS dated updates always take priority.
 ============================================================ */
 
-function buildAddress(fields) {
-  if (
-    clean(
-      fields.UnparsedAddress
-    )
-  ) {
-    return clean(
-      fields.UnparsedAddress
-    );
+const PUBLIC_REMARK_RULES = [
+  {
+    systemType: "hvac",
+    category: "HVAC",
+    patterns: [
+      /\bnew\s+hvac\b/i,
+      /\bupdated\s+hvac\b/i,
+      /\breplaced\s+hvac\b/i,
+      /\bnew\s+a\/c\b/i,
+      /\bnew\s+ac\b/i,
+      /\bupdated\s+a\/c\b/i,
+      /\bupdated\s+ac\b/i,
+      /\bair\s+conditioner\b/i,
+      /\bcentral\s+hvac\b/i,
+      /\bnew\s+furnace\b/i,
+      /\bupdated\s+furnace\b/i,
+      /\bheat\s+pump\b/i
+    ]
+  },
+
+  {
+    systemType: "plumbing",
+    category: "Plumbing",
+    patterns: [
+      /\bnew\s+supply\s+plumbing\b/i,
+      /\bupdated\s+plumbing\b/i,
+      /\bnew\s+plumbing\b/i,
+      /\bre[-\s]?piped\b/i,
+      /\brepiped\b/i,
+      /\bplumbing\s+updated\b/i
+    ]
+  },
+
+  {
+    systemType: "electrical",
+    category: "Electrical",
+    patterns: [
+      /\bnew\s+electrical\b/i,
+      /\bupdated\s+electrical\b/i,
+      /\belectrical\s+update\b/i,
+      /\bnew\s+panel\b/i,
+      /\bupdated\s+panel\b/i,
+      /\bbreaker\s+panel\b/i,
+      /\bsubpanel\b/i,
+      /\bwiring\b/i,
+      /\b200[-\s]?amp\b/i,
+      /\b100[-\s]?amp\b/i,
+      /\b40[-\s]?amp\b/i,
+      /\b50[-\s]?amp\b/i,
+      /\b60[-\s]?amp\b/i,
+      /\belectrical\s+service\b/i
+    ]
+  },
+
+  {
+    systemType: "roof",
+    category: "Roof",
+    patterns: [
+      /\bnew\s+roof\b/i,
+      /\bupdated\s+roof\b/i,
+      /\broof\s+replaced\b/i,
+      /\breplacement\s+roof\b/i,
+      /\brehabbed\s+roof\b/i,
+      /\broof\s+updated\b/i
+    ]
+  },
+
+  {
+    systemType: "flooring",
+    category: "Flooring",
+    patterns: [
+      /\bbrand\s+new\s+flooring\b/i,
+      /\bnew\s+flooring\b/i,
+      /\bupdated\s+flooring\b/i,
+      /\btile\s+flooring\b/i,
+      /\bwood[-\s]?look\s+tile\b/i,
+      /\bhardwood\s+floors?\b/i,
+      /\boriginal\s+hardwood\b/i,
+      /\brefinished\s+hardwood\b/i,
+      /\bceramic\s+tile\s+flooring\b/i,
+      /\blvp\b/i,
+      /\bluxury\s+vinyl\b/i
+    ]
+  },
+
+  {
+    systemType: "kitchen",
+    category: "Kitchen",
+    patterns: [
+      /\bupdated\s+kitchen\b/i,
+      /\bnew\s+kitchen\b/i,
+      /\bremodeled\s+kitchen\b/i,
+      /\brenovated\s+kitchen\b/i,
+      /\bchef'?s\s+kitchen\b/i,
+      /\bkitchen\s+island\b/i,
+      /\btile\s+backsplash\b/i,
+      /\bnew\s+cabinet(?:s|ry)?\b/i,
+      /\bupdated\s+cabinet(?:s|ry)?\b/i,
+      /\bcabinetry\b/i,
+      /\bnew\s+countertops?\b/i,
+      /\bgranite\s+(?:kitchen\s+)?countertops?\b/i,
+      /\bquartz\s+(?:kitchen\s+)?countertops?\b/i,
+      /\bstainless\s+steel\s+appliances\b/i
+    ]
+  },
+
+  {
+    systemType: "bathrooms",
+    category: "Bathrooms",
+    patterns: [
+      /\bupdated\s+bath(?:room)?s?\b/i,
+      /\bremodeled\s+bath(?:room)?s?\b/i,
+      /\brenovated\s+bath(?:room)?s?\b/i,
+      /\bprimary\s+bath\b/i,
+      /\ben[-\s]?suite\b/i,
+      /\bsoaking\s+tub\b/i,
+      /\bnew\s+vanit(?:y|ies)\b/i,
+      /\bupdated\s+vanit(?:y|ies)\b/i,
+      /\bnew\s+toilet\b/i,
+      /\bupdated\s+toilet\b/i,
+      /\btile\s+surround\b/i,
+      /\bwalk[-\s]?in\s+shower\b/i,
+      /\brain\s+shower\b/i,
+      /\bglass\s+shower\s+enclosures?\b/i
+    ]
+  },
+
+  {
+    systemType: "room_addition",
+    category: "Room Addition",
+    patterns: [
+      /\broom\s+addition\b/i,
+      /\bhome\s+addition\b/i,
+      /\badded\s+(?:room|bedroom|bathroom|living\s+space)\b/i,
+      /\bguest\s+house\b/i,
+      /\bcasita\b/i,
+      /\badu\b/i,
+      /\baccessory\s+dwelling\b/i,
+      /\bconverted\s+garage\b/i,
+      /\bgarage\s+conversion\b/i,
+      /\bconverted\s+space\b/i,
+      /\bseparate\s+living\s+area\b/i,
+      /\bin[-\s]?law\s+suite\b/i,
+      /\bmother[-\s]?in[-\s]?law\b/i,
+      /\bdetached\s+(?:living|guest|studio|unit|quarters)\b/i
+    ]
+  },
+
+  {
+    systemType: "pool",
+    category: "Pool",
+    patterns: [
+      /\bupdated\s+pool\b/i,
+      /\bnew\s+pool\b/i,
+      /\bpool\s+resurfaced\b/i,
+      /\bresurfaced\s+pool\b/i,
+      /\bpool\s+remodeled\b/i,
+      /\bnew\s+spa\b/i,
+      /\bupdated\s+spa\b/i,
+      /\bpool\s+pump\s+replaced\b/i,
+      /\bnew\s+pool\s+pump\b/i
+    ]
+  }
+];
+
+function scanPublicRemarks(
+  publicRemarks,
+  structuredUpdates = {}
+) {
+  const remarks =
+    clean(publicRemarks);
+
+  if (!remarks) {
+    return [];
   }
 
-  return [
-    fields.StreetNumber,
-    fields.StreetDirPrefix,
-    fields.StreetName,
-    fields.StreetSuffix,
-    fields.StreetDirSuffix,
-    fields.UnitNumber,
-    fields.City,
-    fields.StateOrProvince,
-    fields.PostalCode
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
+  const results = [];
 
-function buildStreet(fields) {
-  return [
-    fields.StreetNumber,
-    fields.StreetDirPrefix,
-    fields.StreetName,
-    fields.StreetSuffix,
-    fields.StreetDirSuffix,
-    fields.UnitNumber
-  ]
-    .filter(Boolean)
-    .join(" ");
+  for (
+    const rule
+    of PUBLIC_REMARK_RULES
+  ) {
+    /*
+      No duplicate category:
+      if ARMLS already supplied a structured dated update,
+      do not create an undated PublicRemarks signal.
+    */
+    if (
+      Object.prototype.hasOwnProperty.call(
+        structuredUpdates,
+        rule.systemType
+      )
+    ) {
+      continue;
+    }
+
+    let matchedText = "";
+
+    for (
+      const pattern
+      of rule.patterns
+    ) {
+      const match =
+        remarks.match(
+          pattern
+        );
+
+      if (
+        match?.[0]
+      ) {
+        matchedText =
+          clean(
+            match[0]
+          );
+
+        break;
+      }
+    }
+
+    if (!matchedText) {
+      continue;
+    }
+
+    results.push({
+      systemType:
+        rule.systemType,
+
+      category:
+        rule.category,
+
+      signalType:
+        "listing_reported_improvement",
+
+      statement:
+        `${rule.category} improvement or feature reported in ARMLS Public Remarks`,
+
+      matchedText
+    });
+  }
+
+  return results;
 }
 
 
 /* ============================================================
-   GET PROPERTY CANDIDATES
+   SAVE ARMLS PUBLIC REMARK SIGNALS
 ============================================================ */
 
-async function getPropertyCandidates({
-  city,
-  state,
-  zip
+async function replaceRemarkSignals({
+  propertyId,
+  propertyListingId,
+  mlsNumber,
+  signals
 }) {
-  let path =
-    "properties" +
-    "?select=id,full_address,street,city,state,zip,apn";
-
   /*
-    ZIP is the safest geographic limiter
-    because some older BlueVera records
-    may say AZ and others may say Arizona.
-  */
+    These rows are derived from the CURRENT ARMLS PublicRemarks.
+    They are safe to regenerate.
 
-  if (zip) {
-    path +=
-      "&zip=eq." +
-      encodeURIComponent(zip);
+    Remove only ARMLS-generated public-remarks signals for this
+    one property listing so stale scanner results do not remain
+    after remarks are edited.
+  */
+  await supabaseRequest(
+    "property_listing_remark_signals" +
+    "?property_listing_id=eq." +
+    encodeURIComponent(
+      propertyListingId
+    ) +
+    "&source_type=eq.public_remarks" +
+    "&source_name=eq.ARMLS",
+    {
+      method:
+        "DELETE"
+    }
+  );
+
+  if (!signals.length) {
+    return [];
   }
 
-  path +=
-    "&limit=1000";
+  const now =
+    new Date()
+      .toISOString();
+
+  const payload =
+    signals.map(
+      signal => ({
+        property_id:
+          propertyId,
+
+        property_listing_id:
+          propertyListingId,
+
+        mls_number:
+          mlsNumber,
+
+        category:
+          signal.category,
+
+        signal_type:
+          signal.signalType,
+
+        statement:
+          signal.statement,
+
+        matched_text:
+          signal.matchedText,
+
+        source_type:
+          "public_remarks",
+
+        source_name:
+          "ARMLS",
+
+        reported_year:
+          null,
+
+        has_year:
+          false,
+
+        verification_status:
+          "listing_reported",
+
+        evidence_level:
+          "source_reported",
+
+        public_visible:
+          true,
+
+        agent_visible:
+          true,
+
+        homeowner_visible:
+          false,
+
+        updated_at:
+          now
+      })
+    );
 
   const rows =
     await supabaseRequest(
-      path,
+      "property_listing_remark_signals",
       {
         method:
-          "GET"
+          "POST",
+
+        headers: {
+          Prefer:
+            "return=representation"
+        },
+
+        body:
+          JSON.stringify(
+            payload
+          )
       }
     );
 
@@ -481,120 +1053,333 @@ async function getPropertyCandidates({
 
 
 /* ============================================================
-   FIND EXISTING PERMANENT PROPERTY
+   ADDRESS HELPERS
 ============================================================ */
 
-async function findExistingProperty({
-  apn,
-  address,
-  city,
-  state,
-  zip
-}) {
-  const normalizedApn =
+function buildAddressFromFields(
+  fields
+) {
+  const parts = [
+    clean(
+      fields.StreetNumber
+    ),
+
+    clean(
+      fields.StreetDirPrefix
+    ),
+
+    clean(
+      fields.StreetName
+    ),
+
+    clean(
+      fields.StreetSuffix
+    ),
+
+    clean(
+      fields.UnitNumber
+    )
+  ].filter(Boolean);
+
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildFullAddress(
+  fields
+) {
+  const street =
+    buildAddressFromFields(
+      fields
+    );
+
+  return [
+    street,
+    clean(fields.City),
+    clean(
+      fields.StateOrProvince
+    ),
+    clean(
+      fields.PostalCode
+    )
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function extractApn(
+  fields
+) {
+  return clean(
+    fields.ParcelNumber ||
+    fields.TaxParcelNumber ||
+    fields.AssessorParcelNumber ||
+    fields.APN ||
+    ""
+  );
+}
+
+
+/* ============================================================
+   CENTRAL PROPERTY MATCH
+============================================================ */
+
+async function findPropertyByApn(
+  apn
+) {
+  const normalized =
     normalizeApn(apn);
 
-  const properties =
-    await getPropertyCandidates({
-      city,
-      state,
-      zip
-    });
+  if (!normalized) {
+    return null;
+  }
 
+  const rows =
+    await supabaseRequest(
+      "properties" +
+      "?select=*" +
+      "&apn=not.is.null" +
+      "&limit=5000",
+      {
+        method:
+          "GET"
+      }
+    );
 
-  /* ----------------------------------------------------------
-     1. APN FIRST
-  ---------------------------------------------------------- */
+  if (
+    !Array.isArray(rows)
+  ) {
+    return null;
+  }
 
-  if (normalizedApn) {
-    const apnMatches =
-      properties.filter(
-        property =>
-          normalizeApn(
-            property.apn
-          ) ===
-          normalizedApn
+  return (
+    rows.find(row =>
+      normalizeApn(
+        row.apn
+      ) ===
+      normalized
+    ) ||
+    null
+  );
+}
+
+async function findPropertyByAddress(
+  fullAddress
+) {
+  const normalized =
+    normalizeAddress(
+      fullAddress
+    );
+
+  if (!normalized) {
+    return null;
+  }
+
+  const rows =
+    await supabaseRequest(
+      "properties" +
+      "?select=*" +
+      "&limit=5000",
+      {
+        method:
+          "GET"
+      }
+    );
+
+  if (
+    !Array.isArray(rows)
+  ) {
+    return null;
+  }
+
+  return (
+    rows.find(row => {
+      const candidate =
+        row.full_address ||
+        row.address ||
+        row.street ||
+        "";
+
+      return (
+        normalizeAddress(
+          candidate
+        ) ===
+        normalized
+      );
+    }) ||
+    null
+  );
+}
+
+async function createProperty({
+  fullAddress,
+  street,
+  city,
+  state,
+  zip,
+  county,
+  apn,
+  lat,
+  lng,
+  yearBuilt,
+  livingSqft,
+  lotSqft
+}) {
+  const payload = {
+    id:
+      randomUuid(),
+
+    full_address:
+      fullAddress,
+
+    street:
+      street ||
+      null,
+
+    city:
+      city ||
+      null,
+
+    state:
+      state ||
+      null,
+
+    zip:
+      zip ||
+      null,
+
+    county:
+      county ||
+      null,
+
+    apn:
+      apn ||
+      null,
+
+    lat:
+      lat,
+
+    lng:
+      lng,
+
+    year_built:
+      yearBuilt,
+
+    living_sqft:
+      livingSqft,
+
+    lot_sqft:
+      lotSqft,
+
+    created_at:
+      new Date()
+        .toISOString(),
+
+    updated_at:
+      new Date()
+        .toISOString()
+  };
+
+  const rows =
+    await supabaseRequest(
+      "properties",
+      {
+        method:
+          "POST",
+
+        headers: {
+          Prefer:
+            "return=representation"
+        },
+
+        body:
+          JSON.stringify(
+            payload
+          )
+      }
+    );
+
+  return Array.isArray(rows)
+    ? rows[0]
+    : null;
+}
+
+async function findOrCreateProperty({
+  fullAddress,
+  street,
+  city,
+  state,
+  zip,
+  county,
+  apn,
+  lat,
+  lng,
+  yearBuilt,
+  livingSqft,
+  lotSqft
+}) {
+  if (apn) {
+    const byApn =
+      await findPropertyByApn(
+        apn
       );
 
-    if (
-      apnMatches.length === 1
-    ) {
+    if (byApn) {
       return {
         property:
-          apnMatches[0],
+          byApn,
+
+        action:
+          "matched_existing",
 
         matchType:
           "apn"
       };
     }
-
-    if (
-      apnMatches.length > 1
-    ) {
-      throw new Error(
-        "Multiple BlueVera properties matched this APN. Write stopped."
-      );
-    }
   }
 
-
-  /* ----------------------------------------------------------
-     2. NORMALIZED ADDRESS SECOND
-  ---------------------------------------------------------- */
-
-  const targetAddress =
-    normalizeAddress(
-      address
+  const byAddress =
+    await findPropertyByAddress(
+      fullAddress
     );
 
-  if (targetAddress) {
-    const addressMatches =
-      properties.filter(
-        property => {
-          const candidate =
-            normalizeAddress(
-              property.full_address ||
-              [
-                property.street,
-                property.city,
-                property.state,
-                property.zip
-              ]
-                .filter(Boolean)
-                .join(" ")
-            );
+  if (byAddress) {
+    return {
+      property:
+        byAddress,
 
-          return (
-            candidate ===
-            targetAddress
-          );
-        }
-      );
+      action:
+        "matched_existing",
 
-    if (
-      addressMatches.length === 1
-    ) {
-      return {
-        property:
-          addressMatches[0],
-
-        matchType:
-          "normalized_address"
-      };
-    }
-
-    if (
-      addressMatches.length > 1
-    ) {
-      throw new Error(
-        "Multiple BlueVera properties matched this address. Write stopped."
-      );
-    }
+      matchType:
+        "address"
+    };
   }
+
+  const created =
+    await createProperty({
+      fullAddress,
+      street,
+      city,
+      state,
+      zip,
+      county,
+      apn,
+      lat,
+      lng,
+      yearBuilt,
+      livingSqft,
+      lotSqft
+    });
 
   return {
     property:
-      null,
+      created,
+
+    action:
+      "created_new_property",
 
     matchType:
       "no_match"
@@ -603,45 +1388,126 @@ async function findExistingProperty({
 
 
 /* ============================================================
-   CREATE PROPERTY WITH RACE PROTECTION
+   PROPERTY LISTING
 ============================================================ */
 
-async function createProperty({
-  address,
-  street,
-  city,
-  state,
-  zip,
-  apn
+async function findExistingPropertyListing({
+  propertyId,
+  listingKey,
+  mlsNumber
 }) {
-  const payload = {
-    full_address:
-      address,
-
-    street:
-      street,
-
-    city:
-      city,
-
-    state:
-      state,
-
-    zip:
-      zip,
-
-    apn:
-      apn ||
-      null
-  };
-
-  try {
+  if (listingKey) {
     const rows =
       await supabaseRequest(
-        "properties",
+        "property_listings" +
+        "?select=*" +
+        "&listing_key=eq." +
+        encodeURIComponent(
+          listingKey
+        ) +
+        "&limit=1",
         {
           method:
-            "POST",
+            "GET"
+        }
+      );
+
+    if (
+      Array.isArray(rows) &&
+      rows[0]
+    ) {
+      return rows[0];
+    }
+  }
+
+  const rows =
+    await supabaseRequest(
+      "property_listings" +
+      "?select=*" +
+      "&property_id=eq." +
+      encodeURIComponent(
+        propertyId
+      ) +
+      "&mls_number=eq." +
+      encodeURIComponent(
+        mlsNumber
+      ) +
+      "&limit=1",
+      {
+        method:
+          "GET"
+      }
+    );
+
+  return (
+    Array.isArray(rows)
+      ? rows[0] || null
+      : null
+  );
+}
+
+async function savePropertyListing({
+  propertyId,
+  listingKey,
+  mlsNumber,
+  status,
+  listPrice,
+  listingDate,
+  modificationTimestamp
+}) {
+  const existing =
+    await findExistingPropertyListing({
+      propertyId,
+      listingKey,
+      mlsNumber
+    });
+
+  const payload = {
+    property_id:
+      propertyId,
+
+    source_type:
+      "armls",
+
+    mls_number:
+      mlsNumber,
+
+    listing_key:
+      listingKey ||
+      null,
+
+    listing_status:
+      status ||
+      null,
+
+    list_price:
+      listPrice,
+
+    listing_date:
+      listingDate,
+
+    modification_timestamp:
+      modificationTimestamp,
+
+    source_payload_updated_at:
+      modificationTimestamp,
+
+    updated_at:
+      new Date()
+        .toISOString()
+  };
+
+  if (existing) {
+    const rows =
+      await supabaseRequest(
+        "property_listings" +
+        "?id=eq." +
+        encodeURIComponent(
+          existing.id
+        ),
+        {
+          method:
+            "PATCH",
 
           headers: {
             Prefer:
@@ -655,218 +1521,66 @@ async function createProperty({
         }
       );
 
-    const property =
-      Array.isArray(rows)
-        ? rows[0]
-        : rows;
-
-    if (!property?.id) {
-      throw new Error(
-        "ARMLS property was created but no property ID was returned."
-      );
-    }
-
     return {
-      property,
+      row:
+        Array.isArray(rows)
+          ? rows[0]
+          : null,
 
       action:
-        "created_new_property"
+        "updated_existing"
     };
-
-  } catch (error) {
-
-    /*
-      IMPORTANT
-
-      Supabase now has the unique index:
-
-      properties_unique_normalized_apn_idx
-
-      If two ARMLS requests hit at nearly
-      the same time, only one property can
-      win the insert.
-
-      The losing request re-fetches the
-      property instead of creating another.
-    */
-
-    const normalizedRequestedApn =
-      normalizeApn(apn);
-
-    if (!normalizedRequestedApn) {
-      throw error;
-    }
-
-    const properties =
-      await getPropertyCandidates({
-        city,
-        state,
-        zip
-      });
-
-    const apnMatches =
-      properties.filter(
-        property =>
-          normalizeApn(
-            property.apn
-          ) ===
-          normalizedRequestedApn
-      );
-
-    if (
-      apnMatches.length === 1
-    ) {
-      console.log(
-        "Property insert conflict resolved. Existing APN property reused:",
-        apnMatches[0].id
-      );
-
-      return {
-        property:
-          apnMatches[0],
-
-        action:
-          "matched_existing_after_insert_conflict"
-      };
-    }
-
-    if (
-      apnMatches.length > 1
-    ) {
-      throw new Error(
-        "Multiple BlueVera properties matched this APN after insert conflict. Write stopped."
-      );
-    }
-
-    /*
-      If we cannot find an existing property,
-      then the original insert failed for
-      another reason.
-
-      Return the original error.
-    */
-
-    throw error;
   }
-}
-
-
-/* ============================================================
-   SAVE / UPDATE PROPERTY LISTING
-============================================================ */
-
-async function savePropertyListing({
-  propertyId,
-  listing,
-  fields,
-  mlsNumber
-}) {
-  const payload = {
-    property_id:
-      propertyId,
-
-    source_type:
-      "armls",
-
-    mls_number:
-      mlsNumber,
-
-    listing_key:
-      clean(
-        listing.Id ||
-        fields.ListingKey ||
-        fields.SourceSystemKey
-      ) ||
-      null,
-
-    listing_status:
-      clean(
-        fields.StandardStatus ||
-        fields.MlsStatus
-      ) ||
-      null,
-
-    list_price:
-      Number(
-        fields.ListPrice
-      ) ||
-      null,
-
-    listing_date:
-      dateOnly(
-        fields.OnMarketDate ||
-        fields.ListingContractDate
-      ),
-
-    modification_timestamp:
-      clean(
-        fields.ModificationTimestamp
-      ) ||
-      null,
-
-    source_payload_updated_at:
-      new Date()
-        .toISOString(),
-
-    updated_at:
-      new Date()
-        .toISOString()
-  };
 
   const rows =
     await supabaseRequest(
-      "property_listings" +
-      "?on_conflict=source_type,mls_number",
+      "property_listings",
       {
         method:
           "POST",
 
         headers: {
           Prefer:
-            "resolution=merge-duplicates,return=representation"
+            "return=representation"
         },
 
         body:
-          JSON.stringify(
-            payload
-          )
+          JSON.stringify({
+            id:
+              randomUuid(),
+
+            ...payload,
+
+            created_at:
+              new Date()
+                .toISOString()
+          })
       }
     );
 
-  const saved =
-    Array.isArray(rows)
-      ? rows[0]
-      : rows;
+  return {
+    row:
+      Array.isArray(rows)
+        ? rows[0]
+        : null,
 
-  if (!saved?.id) {
-    throw new Error(
-      "Property listing could not be saved."
-    );
-  }
-
-  return saved;
+    action:
+      "created_new"
+  };
 }
 
 
 /* ============================================================
-   SAVE ONE PERMANENT HISTORY RECORD
+   PERMANENT STRUCTURED HISTORY
 ============================================================ */
 
-async function saveHistoryRecord({
+async function findExistingHistoryRecord({
   propertyId,
-  propertyListingId,
+  mlsNumber,
   systemType,
-  year,
-  scope,
-  mlsNumber
+  year
 }) {
-
-  /*
-    Check first so the same MLS listing
-    does not create duplicate history.
-  */
-
-  const existing =
+  const rows =
     await supabaseRequest(
       "property_history_records" +
       "?select=*" +
@@ -874,7 +1588,7 @@ async function saveHistoryRecord({
       encodeURIComponent(
         propertyId
       ) +
-      "&source_type=eq.armls" +
+      "&history_type=eq.listing_update" +
       "&source_record_id=eq." +
       encodeURIComponent(
         mlsNumber
@@ -894,59 +1608,43 @@ async function saveHistoryRecord({
       }
     );
 
-  if (
-    Array.isArray(existing) &&
-    existing[0]?.id
-  ) {
+  return (
+    Array.isArray(rows)
+      ? rows[0] || null
+      : null
+  );
+}
 
-    const updated =
-      await supabaseRequest(
-        "property_history_records" +
-        "?id=eq." +
-        encodeURIComponent(
-          existing[0].id
-        ),
-        {
-          method:
-            "PATCH",
+async function saveHistoryRecord({
+  propertyId,
+  propertyListingId,
+  mlsNumber,
+  systemType,
+  year,
+  scope
+}) {
+  const existing =
+    await findExistingHistoryRecord({
+      propertyId,
+      mlsNumber,
+      systemType,
+      year
+    });
 
-          headers: {
-            Prefer:
-              "return=representation"
-          },
-
-          body:
-            JSON.stringify({
-              property_listing_id:
-                propertyListingId,
-
-              update_scope:
-                scope,
-
-              updated_at:
-                new Date()
-                  .toISOString()
-            })
-        }
-      );
-
+  if (existing) {
     return {
       action:
-        "existing_updated",
+        "already_exists",
 
-      record:
-        Array.isArray(updated)
-          ? updated[0]
-          : updated
+      row:
+        existing
     };
   }
 
-
-  /* ----------------------------------------------------------
-     CREATE NEW LISTING UPDATE HISTORY
-  ---------------------------------------------------------- */
-
   const payload = {
+    id:
+      randomUuid(),
+
     property_id:
       propertyId,
 
@@ -962,14 +1660,15 @@ async function saveHistoryRecord({
     event_year:
       year,
 
-    event_type:
-      "update",
-
     update_scope:
-      scope,
+      scope ||
+      null,
+
+    statement:
+      `${systemType} update reported for ${year}`,
 
     source_type:
-      "armls",
+      "listing_update",
 
     source_name:
       "ARMLS",
@@ -977,14 +1676,14 @@ async function saveHistoryRecord({
     source_record_id:
       mlsNumber,
 
-    statement:
-      `${systemType} update reported for ${year}`,
+    verification_status:
+      "listing_reported",
 
     evidence_level:
       "source_reported",
 
-    verification_status:
-      "listing_reported",
+    public_visible:
+      true,
 
     agent_visible:
       true,
@@ -992,98 +1691,48 @@ async function saveHistoryRecord({
     homeowner_visible:
       false,
 
-    public_visible:
-      false
+    created_at:
+      new Date()
+        .toISOString(),
+
+    updated_at:
+      new Date()
+        .toISOString()
   };
 
-  try {
-    const rows =
-      await supabaseRequest(
-        "property_history_records",
-        {
-          method:
-            "POST",
+  const rows =
+    await supabaseRequest(
+      "property_history_records",
+      {
+        method:
+          "POST",
 
-          headers: {
-            Prefer:
-              "return=representation"
-          },
+        headers: {
+          Prefer:
+            "return=representation"
+        },
 
-          body:
-            JSON.stringify(
-              payload
-            )
-        }
-      );
+        body:
+          JSON.stringify(
+            payload
+          )
+      }
+    );
 
-    return {
-      action:
-        "created",
+  return {
+    action:
+      "created",
 
-      record:
-        Array.isArray(rows)
-          ? rows[0]
-          : rows
-    };
-
-  } catch (error) {
-
-    /*
-      property_history_records already has
-      a unique source-event index.
-
-      If two requests race, re-fetch the
-      history record instead of duplicating it.
-    */
-
-    const retry =
-      await supabaseRequest(
-        "property_history_records" +
-        "?select=*" +
-        "&property_id=eq." +
-        encodeURIComponent(
-          propertyId
-        ) +
-        "&source_type=eq.armls" +
-        "&source_record_id=eq." +
-        encodeURIComponent(
-          mlsNumber
-        ) +
-        "&system_type=eq." +
-        encodeURIComponent(
-          systemType
-        ) +
-        "&event_year=eq." +
-        encodeURIComponent(
-          year
-        ) +
-        "&limit=1",
-        {
-          method:
-            "GET"
-        }
-      );
-
-    if (
-      Array.isArray(retry) &&
-      retry[0]?.id
-    ) {
-      return {
-        action:
-          "existing_after_insert_conflict",
-
-        record:
-          retry[0]
-      };
-    }
-
-    throw error;
-  }
+    row:
+      Array.isArray(rows)
+        ? rows[0]
+        : null
+  };
 }
 
 
 /* ============================================================
-   MAIN API
+   API HANDLER
 ============================================================ */
 
 export default async function handler(
@@ -1091,36 +1740,28 @@ export default async function handler(
   res
 ) {
   res.setHeader(
-    "Content-Type",
-    "application/json"
-  );
-
-  res.setHeader(
     "Cache-Control",
     "no-store, max-age=0"
   );
 
   try {
-
-    /* --------------------------------------------------------
-       ENVIRONMENT CHECKS
-    -------------------------------------------------------- */
-
-    if (!SPARK_TOKEN) {
+    if (
+      req.method !== "GET"
+    ) {
       return res
-        .status(500)
+        .status(405)
         .json({
           success:
             false,
 
           error:
-            "SPARK_ACCESS_TOKEN is missing"
+            "Method not allowed"
         });
     }
 
     if (
       !SUPABASE_URL ||
-      !SERVICE_KEY
+      !SUPABASE_SECRET_KEY
     ) {
       return res
         .status(500)
@@ -1129,31 +1770,17 @@ export default async function handler(
             false,
 
           error:
-            "Supabase server environment variables are missing"
+            "Missing Supabase environment variables"
         });
     }
 
-
-    /* --------------------------------------------------------
-       GET MLS NUMBER
-
-       Example:
-
-       /api/armls-sync-listing-test?mls=7044505
-    -------------------------------------------------------- */
-
     const mlsNumber =
       clean(
-        req.query?.mls ||
-        req.query?.mlsNumber ||
-        DEFAULT_MLS_NUMBER
+        req.query.mls ||
+        req.query.mlsNumber
       );
 
-    if (
-      !/^\d+$/.test(
-        mlsNumber
-      )
-    ) {
+    if (!mlsNumber) {
       return res
         .status(400)
         .json({
@@ -1161,74 +1788,14 @@ export default async function handler(
             false,
 
           error:
-            "A valid numeric MLS number is required."
+            "Missing MLS number"
         });
     }
 
-
-    /* --------------------------------------------------------
-       FETCH ARMLS LISTING
-    -------------------------------------------------------- */
-
-    const filter =
-      `ListingId Eq '${mlsNumber}'`;
-
-    const sparkUrl =
-      `${SPARK_BASE}/listings` +
-      `?_filter=${encodeURIComponent(
-        filter
-      )}` +
-      "&_limit=1" +
-      "&_expand=CustomFields";
-
-    const sparkResponse =
-      await fetch(
-        sparkUrl,
-        {
-          method:
-            "GET",
-
-          headers: {
-            Authorization:
-              `Bearer ${SPARK_TOKEN}`,
-
-            Accept:
-              "application/json"
-          }
-        }
-      );
-
-    const sparkText =
-      await sparkResponse.text();
-
-    let sparkData;
-
-    try {
-      sparkData =
-        JSON.parse(
-          sparkText
-        );
-
-    } catch {
-      throw new Error(
-        "Spark returned invalid JSON."
-      );
-    }
-
-    if (!sparkResponse.ok) {
-      throw new Error(
-        sparkData?.D?.Message ||
-        sparkData?.message ||
-        "Spark listing request failed."
-      );
-    }
-
     const listing =
-      Array.isArray(
-        sparkData?.D?.Results
-      )
-        ? sparkData.D.Results[0]
-        : null;
+      await fetchSparkListing(
+        mlsNumber
+      );
 
     if (!listing) {
       return res
@@ -1238,36 +1805,39 @@ export default async function handler(
             false,
 
           error:
-            `MLS ${mlsNumber} was not found.`
+            "ARMLS listing not found",
+
+          mlsNumber
         });
     }
 
-
-    /* --------------------------------------------------------
-       EXTRACT ARMLS PROPERTY INFORMATION
-    -------------------------------------------------------- */
-
     const fields =
       listing.StandardFields ||
-      listing ||
+      listing.standardFields ||
       {};
 
     const customFields =
       listing.CustomFields ||
-      fields.CustomFields ||
-      {};
+      listing.customFields ||
+      [];
 
-    const address =
-      buildAddress(
+    const listingKey =
+      clean(
+        listing.Id ||
+        listing.ListingKey ||
+        fields.ListingKey ||
+        fields.ListingId ||
+        ""
+      );
+
+    const fullAddress =
+      buildFullAddress(
         fields
       );
 
     const street =
-      buildStreet(
+      buildAddressFromFields(
         fields
-      ) ||
-      clean(
-        fields.UnparsedAddress
       );
 
     const city =
@@ -1277,21 +1847,72 @@ export default async function handler(
 
     const state =
       clean(
-        fields.StateOrProvince
-      ) ||
-      "AZ";
+        fields.StateOrProvince ||
+        fields.State
+      );
 
     const zip =
       clean(
         fields.PostalCode
       );
 
-    const apn =
+    const county =
       clean(
-        fields.ParcelNumber ||
-        fields.ParcelNumberRaw ||
-        fields.APN ||
-        fields.TaxParcelNumber
+        fields.CountyOrParish ||
+        fields.County
+      );
+
+    const apn =
+      extractApn(
+        fields
+      );
+
+    const lat =
+      toNumberOrNull(
+        fields.Latitude
+      );
+
+    const lng =
+      toNumberOrNull(
+        fields.Longitude
+      );
+
+    const yearBuilt =
+      toIntegerOrNull(
+        fields.YearBuilt
+      );
+
+    const livingSqft =
+      toIntegerOrNull(
+        fields.LivingArea
+      );
+
+    const lotSqft =
+      toIntegerOrNull(
+        fields.LotSizeSquareFeet
+      );
+
+    const status =
+      clean(
+        fields.StandardStatus ||
+        fields.MlsStatus
+      );
+
+    const listPrice =
+      toNumberOrNull(
+        fields.ListPrice
+      );
+
+    const listingDate =
+      safeDate(
+        fields.ListingContractDate ||
+        fields.OriginalEntryTimestamp
+      );
+
+    const modificationTimestamp =
+      safeDate(
+        fields.ModificationTimestamp ||
+        listing.ModificationTimestamp
       );
 
     const updates =
@@ -1299,82 +1920,105 @@ export default async function handler(
         customFields
       );
 
+    const publicRemarks =
+      clean(
+        fields.PublicRemarks
+      );
+
+    const remarkSignals =
+      scanPublicRemarks(
+        publicRemarks,
+        updates
+      );
+
 
     /* --------------------------------------------------------
        FIND PERMANENT BLUEVERA PROPERTY
     -------------------------------------------------------- */
 
-    const match =
-      await findExistingProperty({
-        apn,
-        address,
+    const propertyResult =
+      await findOrCreateProperty({
+        fullAddress,
+        street,
         city,
         state,
-        zip
+        zip,
+        county,
+        apn,
+        lat,
+        lng,
+        yearBuilt,
+        livingSqft,
+        lotSqft
       });
 
-    let property =
-      match.property;
+    const property =
+      propertyResult.property;
 
-    let propertyAction =
-      "matched_existing";
-
-    let matchType =
-      match.matchType;
-
-
-    /* --------------------------------------------------------
-       CREATE PROPERTY ONLY IF NONE EXISTS
-    -------------------------------------------------------- */
-
-    if (!property?.id) {
-      const createResult =
-        await createProperty({
-          address,
-          street,
-          city,
-          state,
-          zip,
-          apn
-        });
-
-      property =
-        createResult.property;
-
-      propertyAction =
-        createResult.action;
-
-      if (
-        createResult.action ===
-        "matched_existing_after_insert_conflict"
-      ) {
-        matchType =
-          "apn_insert_conflict_recovered";
-      }
-    }
-
-
-    if (!property?.id) {
+    if (
+      !property ||
+      !property.id
+    ) {
       throw new Error(
-        "BlueVera could not resolve a permanent property ID."
+        "Could not resolve permanent BlueVera property"
       );
     }
 
 
     /* --------------------------------------------------------
-       SAVE / UPDATE MLS LISTING
+       SAVE PROPERTY LISTING
     -------------------------------------------------------- */
 
-    const savedListing =
+    const propertyListingResult =
       await savePropertyListing({
         propertyId:
           property.id,
 
-        listing,
+        listingKey,
 
-        fields,
+        mlsNumber,
 
-        mlsNumber
+        status,
+
+        listPrice,
+
+        listingDate,
+
+        modificationTimestamp
+      });
+
+    const savedListing =
+      propertyListingResult.row;
+
+    if (
+      !savedListing ||
+      !savedListing.id
+    ) {
+      throw new Error(
+        "Could not save property listing"
+      );
+    }
+
+
+    /* --------------------------------------------------------
+       SAVE / REFRESH ARMLS PUBLIC REMARK SIGNALS
+
+       Structured dated categories have already been removed
+       from remarkSignals by scanPublicRemarks().
+    -------------------------------------------------------- */
+
+    const savedRemarkSignals =
+      await replaceRemarkSignals({
+        propertyId:
+          property.id,
+
+        propertyListingId:
+          savedListing.id,
+
+        mlsNumber,
+
+        signals:
+          remarkSignals
       });
 
 
@@ -1386,11 +2030,8 @@ export default async function handler(
       [];
 
     for (
-      const [
-        systemType,
-        update
-      ]
-      of Object.entries(
+      const update
+      of Object.values(
         updates
       )
     ) {
@@ -1402,48 +2043,40 @@ export default async function handler(
           propertyListingId:
             savedListing.id,
 
-          systemType,
+          mlsNumber,
+
+          systemType:
+            update.systemType,
 
           year:
             update.year,
 
           scope:
-            update.scope,
-
-          mlsNumber
+            update.scope
         });
 
       historyResults.push({
-        systemType,
+        systemType:
+          update.systemType,
 
-        eventYear:
+        year:
           update.year,
 
-        updateScope:
+        scope:
           update.scope,
 
         action:
           result.action,
 
-        historyRecordId:
-          result.record?.id ||
+        id:
+          result.row?.id ||
           null
       });
     }
 
 
     /* --------------------------------------------------------
-       RETURN RESULT
-
-       IMPORTANT:
-
-       This endpoint stores permanent
-       property/listing history.
-
-       It does NOT directly write to map.html.
-
-       It does NOT recalculate the Disclosure
-       Rating yet.
+       RESPONSE
     -------------------------------------------------------- */
 
     return res
@@ -1462,25 +2095,41 @@ export default async function handler(
             property.id,
 
           action:
-            propertyAction,
+            propertyResult.action,
 
-          matchType,
+          matchType:
+            propertyResult.matchType,
 
-          address:
+          fullAddress:
             property.full_address ||
-            address,
+            fullAddress,
 
           apn:
             property.apn ||
-            apn
+            apn,
+
+          city:
+            property.city ||
+            city,
+
+          state:
+            property.state ||
+            state,
+
+          zip:
+            property.zip ||
+            zip
         },
 
         propertyListing: {
           id:
             savedListing.id,
 
-          mlsNumber:
-            savedListing.mls_number,
+          action:
+            propertyListingResult.action,
+
+          listingKey:
+            savedListing.listing_key,
 
           status:
             savedListing.listing_status,
@@ -1497,35 +2146,71 @@ export default async function handler(
             updates
           ).length,
 
+        publicRemarksAvailable:
+          Boolean(
+            publicRemarks
+          ),
+
+        remarkSignalsFound:
+          remarkSignals.length,
+
+        remarkSignals:
+          savedRemarkSignals.map(
+            row => ({
+              id:
+                row.id,
+
+              category:
+                row.category,
+
+              signalType:
+                row.signal_type,
+
+              matchedText:
+                row.matched_text,
+
+              reportedYear:
+                row.reported_year
+            })
+          ),
+
         historyResults,
 
         ratingRecalculated:
           false,
 
-        mapUpdated:
+        publicMapUpdated:
           false,
 
         protections: {
-          apnFirstMatching:
+          apnFirst:
             true,
 
-          normalizedApnDatabaseLock:
+          countyAwareIdentity:
             true,
 
-          propertyInsertRaceRecovery:
+          duplicateRaceProtection:
             true,
+
+          ratingRecalculation:
+            false,
+
+          publicMapUpdate:
+            false,
 
           historyDuplicateProtection:
+            true,
+
+          remarkCategoryDuplicateProtection:
+            true,
+
+          structuredUpdateWinsOverRemarks:
             true
-        },
-
-        note:
-          "Permanent ARMLS listing history was stored. Agent Dashboard or map viewing does not trigger this sync."
+        }
       });
-
   } catch (error) {
     console.error(
-      "ARMLS listing sync test failed:",
+      "ARMLS sync listing test error:",
       error
     );
 
@@ -1536,8 +2221,10 @@ export default async function handler(
           false,
 
         error:
-          error?.message ||
-          "ARMLS listing sync test failed."
+          "Server error",
+
+        details:
+          error.message
       });
   }
 }
