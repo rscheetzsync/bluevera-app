@@ -305,52 +305,93 @@ function flattenCustomFields(
 ) {
   const result = {};
 
-  if (
-    !Array.isArray(customFields)
+  function walk(
+    value,
+    path = []
   ) {
-    return result;
-  }
-
-  for (
-    const group
-    of customFields
-  ) {
-    if (!group) {
-      continue;
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return;
     }
 
-    const main =
-      Array.isArray(group.Main)
-        ? group.Main
-        : [];
+    if (Array.isArray(value)) {
+      value.forEach(
+        (item, index) =>
+          walk(
+            item,
+            [
+              ...path,
+              String(index)
+            ]
+          )
+      );
 
-    for (
-      const section
-      of main
+      return;
+    }
+
+    if (
+      typeof value === "object"
     ) {
-      if (
-        !section ||
-        typeof section !== "object"
-      ) {
-        continue;
-      }
-
       for (
         const [
           key,
-          value
+          child
         ]
-        of Object.entries(
-          section
-        )
+        of Object.entries(value)
       ) {
-        result[key] =
-          value;
+        walk(
+          child,
+          [
+            ...path,
+            key
+          ]
+        );
       }
+
+      return;
+    }
+
+    if (!path.length) {
+      return;
+    }
+
+    const fullKey =
+      path.join(".");
+
+    const leafKey =
+      path[
+        path.length - 1
+      ];
+
+    result[fullKey] =
+      value;
+
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        result,
+        leafKey
+      )
+    ) {
+      result[leafKey] =
+        value;
     }
   }
 
+  walk(customFields);
+
   return result;
+}
+
+function normalizeFieldKey(
+  value
+) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function findCustomFieldValue(
@@ -362,14 +403,15 @@ function findCustomFieldValue(
       flattened
     );
 
-  for (
-    const candidate
-    of candidates
-  ) {
-    const target =
-      clean(candidate)
-        .toLowerCase();
+  const normalizedCandidates =
+    candidates.map(candidate =>
+      normalizeFieldKey(candidate)
+    );
 
+  for (
+    const target
+    of normalizedCandidates
+  ) {
     for (
       const [
         key,
@@ -377,10 +419,42 @@ function findCustomFieldValue(
       ]
       of entries
     ) {
+      const normalizedKey =
+        normalizeFieldKey(key);
+
+      const leafKey =
+        normalizeFieldKey(
+          String(key)
+            .split(".")
+            .pop()
+        );
+
       if (
-        clean(key)
-          .toLowerCase() ===
-        target
+        normalizedKey === target ||
+        leafKey === target
+      ) {
+        return value;
+      }
+    }
+  }
+
+  for (
+    const target
+    of normalizedCandidates
+  ) {
+    for (
+      const [
+        key,
+        value
+      ]
+      of entries
+    ) {
+      const normalizedKey =
+        normalizeFieldKey(key);
+
+      if (
+        target &&
+        normalizedKey.includes(target)
       ) {
         return value;
       }
@@ -521,6 +595,145 @@ function parseUpdateField(
   return null;
 }
 
+function extractScopeFromFields(
+  flattened,
+  definition
+) {
+  const entries =
+    Object.entries(
+      flattened
+    );
+
+  for (
+    const [
+      key,
+      value
+    ]
+    of entries
+  ) {
+    const normalizedKey =
+      normalizeFieldKey(key);
+
+    const belongsToSystem =
+      definition.keywords.some(keyword =>
+        normalizedKey.includes(
+          normalizeFieldKey(keyword)
+        )
+      );
+
+    if (!belongsToSystem) {
+      continue;
+    }
+
+    const text =
+      clean(value);
+
+    if (
+      /\bfull\b/i.test(text)
+    ) {
+      return "Full";
+    }
+
+    if (
+      /\bpartial\b/i.test(text)
+    ) {
+      return "Partial";
+    }
+  }
+
+  return null;
+}
+
+function findStructuredUpdateBySystem(
+  flattened,
+  definition
+) {
+  const directValue =
+    findCustomFieldValue(
+      flattened,
+      definition.candidates
+    );
+
+  const directParsed =
+    parseUpdateField(
+      directValue
+    );
+
+  if (directParsed) {
+    return directParsed;
+  }
+
+  const entries =
+    Object.entries(
+      flattened
+    );
+
+  const updateWords = [
+    "update",
+    "updated",
+    "year",
+    "remodel",
+    "remodeled",
+    "renovation",
+    "renovated",
+    "replace",
+    "replaced",
+    "improvement"
+  ];
+
+  for (
+    const [
+      key,
+      value
+    ]
+    of entries
+  ) {
+    const normalizedKey =
+      normalizeFieldKey(key);
+
+    const belongsToSystem =
+      definition.keywords.some(keyword =>
+        normalizedKey.includes(
+          normalizeFieldKey(keyword)
+        )
+      );
+
+    if (!belongsToSystem) {
+      continue;
+    }
+
+    const looksLikeUpdateField =
+      updateWords.some(word =>
+        normalizedKey.includes(word)
+      );
+
+    if (!looksLikeUpdateField) {
+      continue;
+    }
+
+    const parsed =
+      parseUpdateField(
+        value
+      );
+
+    if (!parsed) {
+      continue;
+    }
+
+    if (!parsed.scope) {
+      parsed.scope =
+        extractScopeFromFields(
+          flattened,
+          definition
+        );
+    }
+
+    return parsed;
+  }
+
+  return null;
+}
+
 function extractUpdates(
   customFields
 ) {
@@ -534,6 +747,12 @@ function extractUpdates(
       systemType:
         "flooring",
 
+      keywords: [
+        "flooring",
+        "floor",
+        "hardwood"
+      ],
+
       candidates: [
         "Flooring Updated",
         "Flooring Update",
@@ -545,6 +764,12 @@ function extractUpdates(
     {
       systemType:
         "electrical",
+
+      keywords: [
+        "electrical",
+        "wiring",
+        "panel"
+      ],
 
       candidates: [
         "Electrical Updated",
@@ -560,6 +785,12 @@ function extractUpdates(
       systemType:
         "plumbing",
 
+      keywords: [
+        "plumbing",
+        "repipe",
+        "piping"
+      ],
+
       candidates: [
         "Plumbing Updated",
         "Plumbing Update",
@@ -570,6 +801,15 @@ function extractUpdates(
     {
       systemType:
         "hvac",
+
+      keywords: [
+        "hvac",
+        "heating cooling",
+        "heating/cooling",
+        "air conditioning",
+        "ac",
+        "a/c"
+      ],
 
       candidates: [
         "HVAC Updated",
@@ -584,6 +824,11 @@ function extractUpdates(
       systemType:
         "roof",
 
+      keywords: [
+        "roof",
+        "roofing"
+      ],
+
       candidates: [
         "Roof Updated",
         "Roof Update",
@@ -595,6 +840,10 @@ function extractUpdates(
       systemType:
         "kitchen",
 
+      keywords: [
+        "kitchen"
+      ],
+
       candidates: [
         "Kitchen Updated",
         "Kitchen Update",
@@ -605,6 +854,12 @@ function extractUpdates(
     {
       systemType:
         "bathrooms",
+
+      keywords: [
+        "bath",
+        "bathroom",
+        "bathrooms"
+      ],
 
       candidates: [
         "Bath Updated",
@@ -619,6 +874,11 @@ function extractUpdates(
       systemType:
         "room_addition",
 
+      keywords: [
+        "room addition",
+        "addition"
+      ],
+
       candidates: [
         "Room Addition Updated",
         "Room Addition",
@@ -630,6 +890,11 @@ function extractUpdates(
     {
       systemType:
         "pool",
+
+      keywords: [
+        "pool",
+        "spa"
+      ],
 
       candidates: [
         "Pool Updated",
@@ -645,15 +910,10 @@ function extractUpdates(
     const definition
     of definitions
   ) {
-    const rawValue =
-      findCustomFieldValue(
-        flattened,
-        definition.candidates
-      );
-
     const parsed =
-      parseUpdateField(
-        rawValue
+      findStructuredUpdateBySystem(
+        flattened,
+        definition
       );
 
     if (!parsed) {
@@ -670,19 +930,19 @@ function extractUpdates(
         parsed.year,
 
       scope:
-        parsed.scope
+        parsed.scope ||
+        null
     };
   }
 
   return result;
 }
 
-
 /* ============================================================
    SCAN ARMLS PUBLIC REMARKS
 
    IMPORTANT:
-   - This scanner is deterministic. No outside AI is used.
+   - This scanner is deterministic.
    - These are listing-reported signals, normally without a year.
    - Structured ARMLS dated updates always take priority.
 ============================================================ */
@@ -700,11 +960,16 @@ const PUBLIC_REMARK_RULES = [
       /\bnew\s+ac\b/i,
       /\bupdated\s+a\/c\b/i,
       /\bupdated\s+ac\b/i,
-      /\bair\s+conditioner\b/i,
-      /\bcentral\s+hvac\b/i,
+      /\bnewer\s+a\/c\b/i,
+      /\bnewer\s+ac\b/i,
+      /\bnew\s+air\s+condition(?:er|ing)\b/i,
+      /\bupdated\s+air\s+condition(?:er|ing)\b/i,
+      /\bnewer\s+air\s+condition(?:er|ing)\b/i,
       /\bnew\s+furnace\b/i,
       /\bupdated\s+furnace\b/i,
-      /\bheat\s+pump\b/i
+      /\bnewer\s+furnace\b/i,
+      /\bnew\s+heat\s+pump\b/i,
+      /\bupdated\s+heat\s+pump\b/i
     ]
   },
 
@@ -712,13 +977,16 @@ const PUBLIC_REMARK_RULES = [
     systemType: "plumbing",
     category: "Plumbing",
     patterns: [
-      /\bnew\s+supply\s+plumbing\b/i,
-      /\bupdated\s+plumbing\b/i,
       /\bnew\s+plumbing\b/i,
       /\bnewer\s+plumbing\b/i,
+      /\bupdated\s+plumbing\b/i,
+      /\breplaced\s+plumbing\b/i,
+      /\bplumbing\s+updated\b/i,
       /\bre[-\s]?piped\b/i,
       /\brepiped\b/i,
-      /\bplumbing\s+updated\b/i
+      /\bnew\s+piping\b/i,
+      /\bupdated\s+piping\b/i,
+      /\bnew\s+supply\s+plumbing\b/i
     ]
   },
 
@@ -729,17 +997,20 @@ const PUBLIC_REMARK_RULES = [
       /\bnew\s+electrical\b/i,
       /\bnewer\s+electrical\b/i,
       /\bupdated\s+electrical\b/i,
+      /\breplaced\s+electrical\b/i,
       /\belectrical\s+update\b/i,
+      /\bnew\s+wiring\b/i,
+      /\bupdated\s+wiring\b/i,
       /\bnew\s+panel\b/i,
       /\bupdated\s+panel\b/i,
+      /\breplaced\s+panel\b/i,
       /\bbreaker\s+panel\b/i,
       /\bsubpanel\b/i,
-      /\bwiring\b/i,
       /\b200[-\s]?amp\b/i,
       /\b100[-\s]?amp\b/i,
-      /\b40[-\s]?amp\b/i,
-      /\b50[-\s]?amp\b/i,
       /\b60[-\s]?amp\b/i,
+      /\b50[-\s]?amp\b/i,
+      /\b40[-\s]?amp\b/i,
       /\belectrical\s+service\b/i
     ]
   },
@@ -751,10 +1022,11 @@ const PUBLIC_REMARK_RULES = [
       /\bnew\s+roof\b/i,
       /\bnewer\s+roof\b/i,
       /\bupdated\s+roof\b/i,
+      /\breplaced\s+roof\b/i,
       /\broof\s+replaced\b/i,
       /\breplacement\s+roof\b/i,
-      /\brehabbed\s+roof\b/i,
-      /\broof\s+updated\b/i
+      /\broof\s+updated\b/i,
+      /\bnew\s+roofing\b/i
     ]
   },
 
@@ -762,15 +1034,19 @@ const PUBLIC_REMARK_RULES = [
     systemType: "flooring",
     category: "Flooring",
     patterns: [
-      /\bbrand\s+new\s+flooring\b/i,
       /\bnew\s+flooring\b/i,
+      /\bnewer\s+flooring\b/i,
       /\bupdated\s+flooring\b/i,
+      /\breplaced\s+flooring\b/i,
+      /\bremodeled\s+floors?\b/i,
+      /\bnew\s+floors?\b/i,
+      /\bupdated\s+floors?\b/i,
       /\btile\s+flooring\b/i,
-      /\bwood[-\s]?look\s+tile\b/i,
       /\bhardwood\s+floors?\b/i,
       /\boriginal\s+hardwood\b/i,
       /\brefinished\s+hardwood\b/i,
-      /\bceramic\s+tile\s+flooring\b/i,
+      /\bengineered\s+wood\s+flooring\b/i,
+      /\bwood[-\s]?look\s+tile\b/i,
       /\blvp\b/i,
       /\bluxury\s+vinyl\b/i
     ]
@@ -780,33 +1056,33 @@ const PUBLIC_REMARK_RULES = [
     systemType: "kitchen",
     category: "Kitchen",
     patterns: [
-      /\bupdated\s+kitchen\b/i,
       /\bnew\s+kitchen\b/i,
+      /\bnewer\s+kitchen\b/i,
+      /\bupdated\s+kitchen\b/i,
+      /\bupgraded\s+kitchen\b/i,
       /\bremodeled\s+kitchen\b/i,
       /\brenovated\s+kitchen\b/i,
-      /\bchef'?s\s+kitchen\b/i,
-      /\bkitchen\s+island\b/i,
-      /\btile\s+backsplash\b/i,
       /\bnew\s+cabinet(?:s|ry)?\b/i,
       /\bupdated\s+cabinet(?:s|ry)?\b/i,
-      /\bcabinetry\b/i,
       /\bnew\s+countertops?\b/i,
+      /\bupdated\s+countertops?\b/i,
       /\bgranite\s+(?:kitchen\s+)?countertops?\b/i,
       /\bquartz\s+(?:kitchen\s+)?countertops?\b/i,
-      /\bstainless\s+steel\s+appliances\b/i
+      /\bstainless\s+steel\s+appliances\b/i,
+      /\bnewer\s+appliances\b/i
     ]
   },
 
-     {
+  {
     systemType: "bathrooms",
     category: "Bathrooms",
     patterns: [
+      /\bnew\s+bath(?:room)?s?\b/i,
+      /\bnewer\s+bath(?:room)?s?\b/i,
       /\bupdated\s+bath(?:room)?s?\b/i,
+      /\bupgraded\s+bath(?:room)?s?\b/i,
       /\bremodeled\s+bath(?:room)?s?\b/i,
       /\brenovated\s+bath(?:room)?s?\b/i,
-      /\bprimary\s+bath\b/i,
-      /\ben[-\s]?suite\b/i,
-      /\bsoaking\s+tub\b/i,
       /\bnew\s+vanit(?:y|ies)\b/i,
       /\bupdated\s+vanit(?:y|ies)\b/i,
       /\bnew\s+toilet\b/i,
@@ -814,7 +1090,8 @@ const PUBLIC_REMARK_RULES = [
       /\btile\s+surround\b/i,
       /\bwalk[-\s]?in\s+shower\b/i,
       /\brain\s+shower\b/i,
-      /\bglass\s+shower\s+enclosures?\b/i
+      /\bglass\s+shower\s+enclosures?\b/i,
+      /\bsoaking\s+tub\b/i
     ]
   },
 
@@ -822,9 +1099,9 @@ const PUBLIC_REMARK_RULES = [
     systemType: "pool",
     category: "Pool",
     patterns: [
-      /\bupdated\s+pool\b/i,
       /\bnew\s+pool\b/i,
       /\bnewer\s+pool\b/i,
+      /\bupdated\s+pool\b/i,
       /\bnewly\s+built\s+pool\b/i,
       /\bnewly\s+constructed\s+pool\b/i,
       /\bpool\s+resurfaced\b/i,
@@ -832,32 +1109,25 @@ const PUBLIC_REMARK_RULES = [
       /\bpool\s+remodeled\b/i,
       /\bnew\s+spa\b/i,
       /\bupdated\s+spa\b/i,
-      /\bpool\s+pump\s+replaced\b/i,
-      /\bnew\s+pool\s+pump\b/i
+      /\bnew\s+pool\s+pump\b/i,
+      /\bpool\s+pump\s+replaced\b/i
     ]
   }
 ];
 
 
-/*
-  Some listing remarks apply one modifier to several systems:
+/* ============================================================
+   GROUPED REMARK PHRASES
 
-    "newer plumbing, electrical, HVAC, roof"
-    "updated kitchen, bathrooms and flooring"
-    "replaced roof, HVAC and water heater"
+   Examples:
+     newer plumbing, electrical, HVAC, roof
+     updated kitchen, bathrooms and flooring
+     replaced roof, HVAC and electrical
+============================================================ */
 
-  A normal keyword scanner only sees the first item as being
-  modified. This helper carries the improvement modifier across
-  a short comma/and-separated list.
-
-  It intentionally stays conservative:
-  - only recognized improvement modifiers qualify
-  - only a short clause is scanned
-  - negative phrases such as "not updated" are ignored
-*/
 const GROUPED_REMARK_SYSTEM_PATTERNS = {
   hvac:
-    /\b(?:hvac|a\/c|air\s+conditioning|air\s+conditioner|furnace|heat\s+pump)\b/i,
+    /\b(?:hvac|a\/c|ac|air\s+conditioning|air\s+conditioner|furnace|heat\s+pump)\b/i,
 
   plumbing:
     /\b(?:plumbing|pipes?|piping|repipe|repiped)\b/i,
@@ -895,7 +1165,7 @@ function findGroupedImprovementMatch(
   }
 
   const groupPattern =
-    /\b(new|newer|newly\s+updated|recently\s+updated|updated|upgraded|replaced|renovated|remodeled)\b([^.!;]{0,120})/gi;
+    /\b(new|newer|recent|recently\s+updated|newly\s+updated|updated|upgraded|replaced|renovated|remodeled)\b([^.!;]{0,140})/gi;
 
   let groupMatch;
 
@@ -963,6 +1233,10 @@ function scanPublicRemarks(
     const rule
     of PUBLIC_REMARK_RULES
   ) {
+    /*
+      Structured dated ARMLS update always wins.
+      Do not save the same category again as a listing remark.
+    */
     if (
       Object.prototype.hasOwnProperty.call(
         structuredUpdates,
@@ -1016,7 +1290,7 @@ function scanPublicRemarks(
         "listing_reported_improvement",
 
       statement:
-        `${rule.category} improvement or feature reported in ARMLS Public Remarks`,
+        `${rule.category} improvement reported in ARMLS Public Remarks`,
 
       matchedText
     });
@@ -1027,7 +1301,7 @@ function scanPublicRemarks(
 
 
 /* ============================================================
-   SAVE ARMLS PUBLIC REMARK SIGNALS
+   SAVE LISTING REMARK SIGNALS
 ============================================================ */
 
 async function replaceRemarkSignals({
@@ -1036,6 +1310,13 @@ async function replaceRemarkSignals({
   mlsNumber,
   signals
 }) {
+  /*
+    Remove only the ARMLS scanner results for this listing.
+
+    This makes reruns safe:
+    if an agent changes the remarks, old detected signals
+    do not remain behind.
+  */
   await supabaseRequest(
     "property_listing_remark_signals" +
     "?property_listing_id=eq." +
@@ -1473,7 +1754,6 @@ async function findOrCreateProperty({
   };
 }
 
-
 /* ============================================================
    PROPERTY LISTING
 ============================================================ */
@@ -1551,8 +1831,7 @@ async function savePropertyListing({
 
   const payload = {
     property_id:
-
-           propertyId,
+      propertyId,
 
     source_type:
       "armls",
@@ -1659,7 +1938,7 @@ async function savePropertyListing({
 
 
 /* ============================================================
-   PERMANENT STRUCTURED HISTORY
+   PERMANENT STRUCTURED LISTING UPDATE HISTORY
 ============================================================ */
 
 async function findExistingHistoryRecord({
@@ -2003,6 +2282,11 @@ export default async function handler(
         listing.ModificationTimestamp
       );
 
+
+    /* --------------------------------------------------------
+       PULL BOTH ARMLS DATA TYPES IN ONE RUN
+    -------------------------------------------------------- */
+
     const updates =
       extractUpdates(
         customFields
@@ -2089,10 +2373,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       SAVE / REFRESH ARMLS PUBLIC REMARK SIGNALS
-
-       Structured dated categories have already been removed
-       from remarkSignals by scanPublicRemarks().
+       SAVE / REFRESH LISTING REMARKS
     -------------------------------------------------------- */
 
     const savedRemarkSignals =
@@ -2111,7 +2392,7 @@ export default async function handler(
 
 
     /* --------------------------------------------------------
-       SAVE PERMANENT LISTING UPDATE HISTORY
+       SAVE STRUCTURED LISTING UPDATES
     -------------------------------------------------------- */
 
     const historyResults =
@@ -2165,6 +2446,8 @@ export default async function handler(
 
     /* --------------------------------------------------------
        RESPONSE
+
+       Listing Updates and Listing Remarks remain separate.
     -------------------------------------------------------- */
 
     return res
@@ -2174,7 +2457,7 @@ export default async function handler(
           true,
 
         mode:
-          "CONTROLLED_REUSABLE_LISTING_WRITE",
+          "ARMLS_LISTING_UPDATES_AND_REMARKS",
 
         mlsNumber,
 
@@ -2229,18 +2512,85 @@ export default async function handler(
             savedListing.modification_timestamp
         },
 
+
+        /* ----------------------------------------------------
+           STRUCTURED ARMLS LISTING UPDATES
+        ---------------------------------------------------- */
+
+        listingUpdatesFound:
+          Object.keys(
+            updates
+          ).length,
+
         updatesFound:
           Object.keys(
             updates
           ).length,
+
+        listingUpdates:
+          Object.values(
+            updates
+          ).map(
+            update => ({
+              systemType:
+                update.systemType,
+
+              year:
+                update.year,
+
+              scope:
+                update.scope ||
+                null,
+
+              source:
+                "ARMLS",
+
+              type:
+                "structured"
+            })
+          ),
+
+
+        /* ----------------------------------------------------
+           ARMLS PUBLIC REMARK SIGNALS
+        ---------------------------------------------------- */
 
         publicRemarksAvailable:
           Boolean(
             publicRemarks
           ),
 
+        listingRemarksFound:
+          remarkSignals.length,
+
         remarkSignalsFound:
           remarkSignals.length,
+
+        listingRemarks:
+          savedRemarkSignals.map(
+            row => ({
+              id:
+                row.id,
+
+              category:
+                row.category,
+
+              signalType:
+                row.signal_type,
+
+              matchedText:
+                row.matched_text,
+
+              reportedYear:
+                row.reported_year,
+
+              source:
+                "ARMLS",
+
+              type:
+                "public_remarks"
+            })
+          ),
 
         remarkSignals:
           savedRemarkSignals.map(
@@ -2316,4 +2666,3 @@ export default async function handler(
       });
   }
 }
-
