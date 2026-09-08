@@ -251,7 +251,8 @@ async function fetchSparkListing(
     `?_filter=${encodeURIComponent(
       `ListingId Eq '${mlsNumber}'`
     )}` +
-    `&_limit=1`;
+    `&_limit=1` +
+    `&_expand=CustomFields`;
 
   const response =
     await fetch(
@@ -300,638 +301,219 @@ async function fetchSparkListing(
    EXTRACT STRUCTURED ARMLS UPDATE FIELDS
 ============================================================ */
 
-function flattenCustomFields(
-  customFields
+function findCustomField(
+  customFields,
+  label
 ) {
-  const result = {};
-
-  function walk(
-    value,
-    path = []
-  ) {
+  function search(value) {
     if (
       value === null ||
       value === undefined
     ) {
-      return;
+      return null;
     }
 
     if (Array.isArray(value)) {
-      value.forEach(
-        (item, index) =>
-          walk(
-            item,
-            [
-              ...path,
-              String(index)
-            ]
-          )
-      );
+      for (const item of value) {
+        const found =
+          search(item);
 
-      return;
+        if (found !== null) {
+          return found;
+        }
+      }
+
+      return null;
     }
 
     if (
       typeof value === "object"
     ) {
-      for (
-        const [
-          key,
-          child
-        ]
-        of Object.entries(value)
-      ) {
-        walk(
-          child,
-          [
-            ...path,
-            key
-          ]
-        );
-      }
-
-      return;
-    }
-
-    if (!path.length) {
-      return;
-    }
-
-    const fullKey =
-      path.join(".");
-
-    const leafKey =
-      path[
-        path.length - 1
-      ];
-
-    result[fullKey] =
-      value;
-
-    if (
-      !Object.prototype.hasOwnProperty.call(
-        result,
-        leafKey
-      )
-    ) {
-      result[leafKey] =
-        value;
-    }
-  }
-
-  walk(customFields);
-
-  return result;
-}
-
-function normalizeFieldKey(
-  value
-) {
-  return clean(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function findCustomFieldValue(
-  flattened,
-  candidates
-) {
-  const entries =
-    Object.entries(
-      flattened
-    );
-
-  const normalizedCandidates =
-    candidates.map(candidate =>
-      normalizeFieldKey(candidate)
-    );
-
-  for (
-    const target
-    of normalizedCandidates
-  ) {
-    for (
-      const [
-        key,
-        value
-      ]
-      of entries
-    ) {
-      const normalizedKey =
-        normalizeFieldKey(key);
-
-      const leafKey =
-        normalizeFieldKey(
-          String(key)
-            .split(".")
-            .pop()
-        );
-
       if (
-        normalizedKey === target ||
-        leafKey === target
-      ) {
-        return value;
-      }
-    }
-  }
-
-  for (
-    const target
-    of normalizedCandidates
-  ) {
-    for (
-      const [
-        key,
-        value
-      ]
-      of entries
-    ) {
-      const normalizedKey =
-        normalizeFieldKey(key);
-
-      if (
-        target &&
-        normalizedKey.includes(target)
-      ) {
-        return value;
-      }
-    }
-  }
-
-  return null;
-}
-
-function parseUpdateField(
-  rawValue
-) {
-  if (
-    rawValue === null ||
-    rawValue === undefined
-  ) {
-    return null;
-  }
-
-  if (
-    typeof rawValue === "number"
-  ) {
-    const year =
-      Math.trunc(rawValue);
-
-    if (
-      isReasonableYear(year)
-    ) {
-      return {
-        year,
-        scope:
-          null
-      };
-    }
-
-    return null;
-  }
-
-  if (
-    typeof rawValue === "string"
-  ) {
-    const text =
-      clean(rawValue);
-
-    if (!text) {
-      return null;
-    }
-
-    const yearMatch =
-      text.match(
-        /\b(19\d{2}|20\d{2})\b/
-      );
-
-    const year =
-      yearMatch
-        ? Number(
-            yearMatch[1]
+        Object.prototype
+          .hasOwnProperty.call(
+            value,
+            label
           )
-        : null;
+      ) {
+        return value[label];
+      }
 
-    if (
-      !isReasonableYear(year)
-    ) {
-      return null;
+      for (
+        const child
+        of Object.values(value)
+      ) {
+        const found =
+          search(child);
+
+        if (found !== null) {
+          return found;
+        }
+      }
     }
 
-    let scope =
-      null;
-
-    if (
-      /\bfull\b/i.test(
-        text
-      )
-    ) {
-      scope =
-        "Full";
-    } else if (
-      /\bpartial\b/i.test(
-        text
-      )
-    ) {
-      scope =
-        "Partial";
-    }
-
-    return {
-      year,
-      scope
-    };
+    return null;
   }
 
-  if (
-    typeof rawValue === "object"
-  ) {
-    const possibleYear =
-      rawValue.Year ??
-      rawValue.year ??
-      rawValue.UpdateYear ??
-      rawValue.updateYear ??
-      rawValue.Value ??
-      rawValue.value ??
-      null;
-
-    const possibleScope =
-      rawValue.Scope ??
-      rawValue.scope ??
-      rawValue.UpdateScope ??
-      rawValue.updateScope ??
-      null;
-
-    const year =
-      toIntegerOrNull(
-        possibleYear
-      );
-
-    if (
-      !isReasonableYear(year)
-    ) {
-      return null;
-    }
-
-    let scope =
-      clean(
-        possibleScope
-      );
-
-    if (!scope) {
-      scope =
-        null;
-    }
-
-    return {
-      year,
-      scope
-    };
-  }
-
-  return null;
-}
-
-function extractScopeFromFields(
-  flattened,
-  definition
-) {
-  const entries =
-    Object.entries(
-      flattened
-    );
-
-  for (
-    const [
-      key,
-      value
-    ]
-    of entries
-  ) {
-    const normalizedKey =
-      normalizeFieldKey(key);
-
-    const belongsToSystem =
-      definition.keywords.some(keyword =>
-        normalizedKey.includes(
-          normalizeFieldKey(keyword)
-        )
-      );
-
-    if (!belongsToSystem) {
-      continue;
-    }
-
-    const text =
-      clean(value);
-
-    if (
-      /\bfull\b/i.test(text)
-    ) {
-      return "Full";
-    }
-
-    if (
-      /\bpartial\b/i.test(text)
-    ) {
-      return "Partial";
-    }
-  }
-
-  return null;
-}
-
-function findStructuredUpdateBySystem(
-  flattened,
-  definition
-) {
-  const directValue =
-    findCustomFieldValue(
-      flattened,
-      definition.candidates
-    );
-
-  const directParsed =
-    parseUpdateField(
-      directValue
-    );
-
-  if (directParsed) {
-    return directParsed;
-  }
-
-  const entries =
-    Object.entries(
-      flattened
-    );
-
-  const updateWords = [
-    "update",
-    "updated",
-    "year",
-    "remodel",
-    "remodeled",
-    "renovation",
-    "renovated",
-    "replace",
-    "replaced",
-    "improvement"
-  ];
-
-  for (
-    const [
-      key,
-      value
-    ]
-    of entries
-  ) {
-    const normalizedKey =
-      normalizeFieldKey(key);
-
-    const belongsToSystem =
-      definition.keywords.some(keyword =>
-        normalizedKey.includes(
-          normalizeFieldKey(keyword)
-        )
-      );
-
-    if (!belongsToSystem) {
-      continue;
-    }
-
-    const looksLikeUpdateField =
-      updateWords.some(word =>
-        normalizedKey.includes(word)
-      );
-
-    if (!looksLikeUpdateField) {
-      continue;
-    }
-
-    const parsed =
-      parseUpdateField(
-        value
-      );
-
-    if (!parsed) {
-      continue;
-    }
-
-    if (!parsed.scope) {
-      parsed.scope =
-        extractScopeFromFields(
-          flattened,
-          definition
-        );
-    }
-
-    return parsed;
-  }
-
-  return null;
+  return search(customFields);
 }
 
 function extractUpdates(
   customFields
 ) {
-  const flattened =
-    flattenCustomFields(
-      customFields
-    );
+  const raw = {
+    flooring: {
+      year:
+        findCustomField(
+          customFields,
+          "Floor Yr Updated"
+        ),
 
-  const definitions = [
-    {
-      systemType:
-        "flooring",
-
-      keywords: [
-        "flooring",
-        "floor",
-        "hardwood"
-      ],
-
-      candidates: [
-        "Flooring Updated",
-        "Flooring Update",
-        "Flooring Year",
-        "Flooring"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Floor Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "electrical",
+    electrical: {
+      year:
+        findCustomField(
+          customFields,
+          "Wiring Yr Updated"
+        ),
 
-      keywords: [
-        "electrical",
-        "wiring",
-        "panel"
-      ],
-
-      candidates: [
-        "Electrical Updated",
-        "Electrical Update",
-        "Electrical Year",
-        "Wiring Updated",
-        "Wiring Update",
-        "Wiring Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Wiring Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "plumbing",
+    plumbing: {
+      year:
+        findCustomField(
+          customFields,
+          "Plmbg Yr Updated"
+        ),
 
-      keywords: [
-        "plumbing",
-        "repipe",
-        "piping"
-      ],
-
-      candidates: [
-        "Plumbing Updated",
-        "Plumbing Update",
-        "Plumbing Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Plmbg Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "hvac",
+    hvac: {
+      year:
+        findCustomField(
+          customFields,
+          "Ht/Cool Yr Updated"
+        ),
 
-      keywords: [
-  "hvac",
-  "heating cooling",
-  "heating/cooling",
-  "air conditioning",
-  "air conditioner",
-  "furnace",
-  "heat pump"
-],
-
-      candidates: [
-        "HVAC Updated",
-        "HVAC Update",
-        "HVAC Year",
-        "Heating Cooling Updated",
-        "Heating/Cooling Updated"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Ht/Cool Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "roof",
+    roof: {
+      year:
+        findCustomField(
+          customFields,
+          "Roof Yr Updated"
+        ),
 
-      keywords: [
-        "roof",
-        "roofing"
-      ],
-
-      candidates: [
-        "Roof Updated",
-        "Roof Update",
-        "Roof Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Roof Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "kitchen",
+    kitchen: {
+      year:
+        findCustomField(
+          customFields,
+          "Kitchen Yr Updated"
+        ),
 
-      keywords: [
-        "kitchen"
-      ],
-
-      candidates: [
-        "Kitchen Updated",
-        "Kitchen Update",
-        "Kitchen Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Kitchen Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "bathrooms",
+    bathrooms: {
+      year:
+        findCustomField(
+          customFields,
+          "Bath(s) Yr Updated"
+        ),
 
-      keywords: [
-        "bath",
-        "bathroom",
-        "bathrooms"
-      ],
-
-      candidates: [
-        "Bath Updated",
-        "Bath Update",
-        "Bath Year",
-        "Bathroom Updated",
-        "Bathrooms Updated"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Bath(s) Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "room_addition",
+    room_addition: {
+      year:
+        findCustomField(
+          customFields,
+          "Rm Adtn Yr Updated"
+        ),
 
-      keywords: [
-        "room addition",
-        "addition"
-      ],
-
-      candidates: [
-        "Room Addition Updated",
-        "Room Addition",
-        "Addition Updated",
-        "Addition Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Rm Adtn Partial/Full"
+        )
     },
 
-    {
-      systemType:
-        "pool",
+    pool: {
+      year:
+        findCustomField(
+          customFields,
+          "Pool Yr Updated"
+        ),
 
-      keywords: [
-        "pool",
-        "spa"
-      ],
-
-      candidates: [
-        "Pool Updated",
-        "Pool Update",
-        "Pool Year"
-      ]
+      scope:
+        findCustomField(
+          customFields,
+          "Pool Partial/Full"
+        )
     }
-  ];
+  };
 
   const result = {};
 
   for (
-    const definition
-    of definitions
+    const [
+      systemType,
+      item
+    ]
+    of Object.entries(raw)
   ) {
-    const parsed =
-      findStructuredUpdateBySystem(
-        flattened,
-        definition
-      );
-
-    if (!parsed) {
+    if (
+      !isReasonableYear(
+        Number(item.year)
+      )
+    ) {
       continue;
     }
 
-    result[
-      definition.systemType
-    ] = {
-      systemType:
-        definition.systemType,
+    result[systemType] = {
+      systemType,
 
       year:
-        parsed.year,
+        Number(item.year),
 
       scope:
-        parsed.scope ||
+        clean(item.scope) ||
         null
     };
   }
@@ -1234,10 +816,6 @@ function scanPublicRemarks(
     const rule
     of PUBLIC_REMARK_RULES
   ) {
-    /*
-      Structured dated ARMLS update always wins.
-      Do not save the same category again as a listing remark.
-    */
     if (
       Object.prototype.hasOwnProperty.call(
         structuredUpdates,
@@ -1311,13 +889,6 @@ async function replaceRemarkSignals({
   mlsNumber,
   signals
 }) {
-  /*
-    Remove only the ARMLS scanner results for this listing.
-
-    This makes reruns safe:
-    if an agent changes the remarks, old detected signals
-    do not remain behind.
-  */
   await supabaseRequest(
     "property_listing_remark_signals" +
     "?property_listing_id=eq." +
@@ -1419,7 +990,6 @@ async function replaceRemarkSignals({
     ? rows
     : [];
 }
-
 
 /* ============================================================
    ADDRESS HELPERS
@@ -1755,6 +1325,7 @@ async function findOrCreateProperty({
   };
 }
 
+
 /* ============================================================
    PROPERTY LISTING
 ============================================================ */
@@ -1936,7 +1507,6 @@ async function savePropertyListing({
       "created_new"
   };
 }
-
 
 /* ============================================================
    PERMANENT STRUCTURED LISTING UPDATE HISTORY
@@ -2186,8 +1756,10 @@ export default async function handler(
 
     const customFields =
       listing.CustomFields ||
+      fields.CustomFields ||
       listing.customFields ||
-      [];
+      fields.customFields ||
+      {};
 
     const listingKey =
       clean(
@@ -2667,3 +2239,4 @@ export default async function handler(
       });
   }
 }
+
