@@ -878,10 +878,7 @@ const GROUPED_REMARK_SYSTEM_PATTERNS = {
     /\b(?:bathrooms?|baths?|vanit(?:y|ies)|showers?)\b/i,
 
   pool:
-    /\b(?:pool|spa)\b/i,
-
-  room_addition:
-    /\b(?:room\s+addition|home\s+addition|casita|guest\s+house|adu|accessory\s+dwelling|garage\s+conversion|converted\s+garage)\b/i
+    /\b(?:pool|spa)\b/i
 };
 
 function findGroupedImprovementMatch(
