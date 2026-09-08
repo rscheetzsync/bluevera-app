@@ -819,27 +819,6 @@ const PUBLIC_REMARK_RULES = [
   },
 
   {
-    systemType: "room_addition",
-    category: "Room Addition",
-    patterns: [
-      /\broom\s+addition\b/i,
-      /\bhome\s+addition\b/i,
-      /\badded\s+(?:room|bedroom|bathroom|living\s+space)\b/i,
-      /\bguest\s+house\b/i,
-      /\bcasita\b/i,
-      /\badu\b/i,
-      /\baccessory\s+dwelling\b/i,
-      /\bconverted\s+garage\b/i,
-      /\bgarage\s+conversion\b/i,
-      /\bconverted\s+space\b/i,
-      /\bseparate\s+living\s+area\b/i,
-      /\bin[-\s]?law\s+suite\b/i,
-      /\bmother[-\s]?in[-\s]?law\b/i,
-      /\bdetached\s+(?:living|guest|studio|unit|quarters)\b/i
-    ]
-  },
-
-  {
     systemType: "pool",
     category: "Pool",
     patterns: [
