@@ -693,6 +693,7 @@ const PUBLIC_REMARK_RULES = [
     category: "HVAC",
     patterns: [
       /\bnew\s+hvac\b/i,
+      /\bnewer\s+hvac\b/i,
       /\bupdated\s+hvac\b/i,
       /\breplaced\s+hvac\b/i,
       /\bnew\s+a\/c\b/i,
@@ -714,6 +715,7 @@ const PUBLIC_REMARK_RULES = [
       /\bnew\s+supply\s+plumbing\b/i,
       /\bupdated\s+plumbing\b/i,
       /\bnew\s+plumbing\b/i,
+      /\bnewer\s+plumbing\b/i,
       /\bre[-\s]?piped\b/i,
       /\brepiped\b/i,
       /\bplumbing\s+updated\b/i
@@ -725,6 +727,7 @@ const PUBLIC_REMARK_RULES = [
     category: "Electrical",
     patterns: [
       /\bnew\s+electrical\b/i,
+      /\bnewer\s+electrical\b/i,
       /\bupdated\s+electrical\b/i,
       /\belectrical\s+update\b/i,
       /\bnew\s+panel\b/i,
@@ -746,6 +749,7 @@ const PUBLIC_REMARK_RULES = [
     category: "Roof",
     patterns: [
       /\bnew\s+roof\b/i,
+      /\bnewer\s+roof\b/i,
       /\bupdated\s+roof\b/i,
       /\broof\s+replaced\b/i,
       /\breplacement\s+roof\b/i,
@@ -793,7 +797,7 @@ const PUBLIC_REMARK_RULES = [
     ]
   },
 
-  {
+     {
     systemType: "bathrooms",
     category: "Bathrooms",
     patterns: [
@@ -841,6 +845,9 @@ const PUBLIC_REMARK_RULES = [
     patterns: [
       /\bupdated\s+pool\b/i,
       /\bnew\s+pool\b/i,
+      /\bnewer\s+pool\b/i,
+      /\bnewly\s+built\s+pool\b/i,
+      /\bnewly\s+constructed\s+pool\b/i,
       /\bpool\s+resurfaced\b/i,
       /\bresurfaced\s+pool\b/i,
       /\bpool\s+remodeled\b/i,
@@ -851,6 +858,117 @@ const PUBLIC_REMARK_RULES = [
     ]
   }
 ];
+
+
+/*
+  Some listing remarks apply one modifier to several systems:
+
+    "newer plumbing, electrical, HVAC, roof"
+    "updated kitchen, bathrooms and flooring"
+    "replaced roof, HVAC and water heater"
+
+  A normal keyword scanner only sees the first item as being
+  modified. This helper carries the improvement modifier across
+  a short comma/and-separated list.
+
+  It intentionally stays conservative:
+  - only recognized improvement modifiers qualify
+  - only a short clause is scanned
+  - negative phrases such as "not updated" are ignored
+*/
+const GROUPED_REMARK_SYSTEM_PATTERNS = {
+  hvac:
+    /\b(?:hvac|a\/c|air\s+conditioning|air\s+conditioner|furnace|heat\s+pump)\b/i,
+
+  plumbing:
+    /\b(?:plumbing|pipes?|piping|repipe|repiped)\b/i,
+
+  electrical:
+    /\b(?:electrical|wiring|electrical\s+panel|breaker\s+panel|panel)\b/i,
+
+  roof:
+    /\b(?:roof|roofing)\b/i,
+
+  flooring:
+    /\b(?:flooring|floors?|hardwood|tile|lvp|luxury\s+vinyl)\b/i,
+
+  kitchen:
+    /\b(?:kitchen|cabinets?|cabinetry|countertops?)\b/i,
+
+  bathrooms:
+    /\b(?:bathrooms?|baths?|vanit(?:y|ies)|showers?)\b/i,
+
+  pool:
+    /\b(?:pool|spa)\b/i,
+
+  room_addition:
+    /\b(?:room\s+addition|home\s+addition|casita|guest\s+house|adu|accessory\s+dwelling|garage\s+conversion|converted\s+garage)\b/i
+};
+
+function findGroupedImprovementMatch(
+  remarks,
+  systemType
+) {
+  const systemPattern =
+    GROUPED_REMARK_SYSTEM_PATTERNS[
+      systemType
+    ];
+
+  if (!systemPattern) {
+    return "";
+  }
+
+  const groupPattern =
+    /\b(new|newer|newly\s+updated|recently\s+updated|updated|upgraded|replaced|renovated|remodeled)\b([^.!;]{0,120})/gi;
+
+  let groupMatch;
+
+  while (
+    (
+      groupMatch =
+        groupPattern.exec(
+          remarks
+        )
+    ) !== null
+  ) {
+    const modifier =
+      clean(
+        groupMatch[1]
+      );
+
+    const clauseTail =
+      clean(
+        groupMatch[2]
+      );
+
+    const fullClause =
+      clean(
+        `${modifier} ${clauseTail}`
+      );
+
+    if (
+      /\b(?:not|never)\s+(?:been\s+)?(?:updated|replaced|upgraded|renovated|remodeled)\b/i
+        .test(fullClause)
+    ) {
+      continue;
+    }
+
+    const systemMatch =
+      fullClause.match(
+        systemPattern
+      );
+
+    if (!systemMatch?.[0]) {
+      continue;
+    }
+
+    return clean(
+      `${modifier} ${systemMatch[0]}`
+    );
+  }
+
+  return "";
+}
 
 function scanPublicRemarks(
   publicRemarks,
@@ -869,11 +987,6 @@ function scanPublicRemarks(
     const rule
     of PUBLIC_REMARK_RULES
   ) {
-    /*
-      No duplicate category:
-      if ARMLS already supplied a structured dated update,
-      do not create an undated PublicRemarks signal.
-    */
     if (
       Object.prototype.hasOwnProperty.call(
         structuredUpdates,
@@ -883,26 +996,32 @@ function scanPublicRemarks(
       continue;
     }
 
-    let matchedText = "";
+    let matchedText =
+      findGroupedImprovementMatch(
+        remarks,
+        rule.systemType
+      );
 
-    for (
-      const pattern
-      of rule.patterns
-    ) {
-      const match =
-        remarks.match(
-          pattern
-        );
-
-      if (
-        match?.[0]
+    if (!matchedText) {
+      for (
+        const pattern
+        of rule.patterns
       ) {
-        matchedText =
-          clean(
-            match[0]
+        const match =
+          remarks.match(
+            pattern
           );
 
-        break;
+        if (
+          match?.[0]
+        ) {
+          matchedText =
+            clean(
+              match[0]
+            );
+
+          break;
+        }
       }
     }
 
@@ -941,14 +1060,6 @@ async function replaceRemarkSignals({
   mlsNumber,
   signals
 }) {
-  /*
-    These rows are derived from the CURRENT ARMLS PublicRemarks.
-    They are safe to regenerate.
-
-    Remove only ARMLS-generated public-remarks signals for this
-    one property listing so stale scanner results do not remain
-    after remarks are edited.
-  */
   await supabaseRequest(
     "property_listing_remark_signals" +
     "?property_listing_id=eq." +
@@ -1464,7 +1575,8 @@ async function savePropertyListing({
 
   const payload = {
     property_id:
-      propertyId,
+
+           propertyId,
 
     source_type:
       "armls",
@@ -2228,3 +2340,4 @@ export default async function handler(
       });
   }
 }
+
