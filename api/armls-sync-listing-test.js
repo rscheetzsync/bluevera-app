@@ -803,13 +803,14 @@ function extractUpdates(
         "hvac",
 
       keywords: [
-        "hvac",
-        "heating cooling",
-        "heating/cooling",
-        "air conditioning",
-        "ac",
-        "a/c"
-      ],
+  "hvac",
+  "heating cooling",
+  "heating/cooling",
+  "air conditioning",
+  "air conditioner",
+  "furnace",
+  "heat pump"
+],
 
       candidates: [
         "HVAC Updated",
