@@ -296,14 +296,434 @@ function publicTimelineEntry(entry) {
   };
 }
 
+
+/* =========================================================
+   HOMEOWNER HISTORY CLASSIFICATION + DEDUPLICATION
+   ========================================================= */
+
 function isHomeownerEntry(entry) {
+  const type =
+    sourceType(entry);
+
+  const table =
+    originalTable(entry);
+
+  const sourceName =
+    clean(
+      entry?.source_name
+    ).toLowerCase();
+
+  const verification =
+    clean(
+      entry?.verification_status
+    ).toLowerCase();
+
+  const text =
+    [
+      entry?.category,
+      entry?.system_name,
+      entry?.statement,
+      entry?.source_type,
+      entry?.source_name,
+      entry?.verification_status
+    ]
+      .map(clean)
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
   return (
-    sourceType(entry) ===
+    type ===
       "homeowner_update" ||
-    originalTable(entry) ===
-      "homeowner_updates"
+    type.includes(
+      "homeowner"
+    ) ||
+    table ===
+      "homeowner_updates" ||
+    sourceName.includes(
+      "homeowner"
+    ) ||
+    verification.includes(
+      "homeowner"
+    ) ||
+    verification.includes(
+      "owner_reported"
+    ) ||
+    verification.includes(
+      "owner reported"
+    ) ||
+    text.includes(
+      "homeowner submitted"
+    ) ||
+    text.includes(
+      "homeowner reported"
+    )
   );
 }
+
+function normalizeHomeownerText(value) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function homeownerYear(entry) {
+  const direct =
+    Number(
+      entry?.event_year ||
+      entry?.year ||
+      0
+    );
+
+  if (
+    Number.isFinite(direct) &&
+    direct >= 1900 &&
+    direct <= 2100
+  ) {
+    return String(
+      Math.round(direct)
+    );
+  }
+
+  const text =
+    [
+      entry?.event_date,
+      entry?.approximate_date,
+      entry?.created_at,
+      entry?.updated_at,
+      entry?.statement,
+      entry?.description,
+      entry?.note
+    ]
+      .map(clean)
+      .filter(Boolean)
+      .join(" ");
+
+  const match =
+    text.match(
+      /\b(19\d{2}|20\d{2}|2100)\b/
+    );
+
+  return match
+    ? match[1]
+    : "";
+}
+
+function homeownerSystemKey(entry) {
+  const text =
+    normalizeHomeownerText(
+      [
+        entry?.update_type,
+        entry?.item_label,
+        entry?.system_name,
+        entry?.category,
+        entry?.title,
+        entry?.statement,
+        entry?.description,
+        entry?.note
+      ]
+        .map(clean)
+        .filter(Boolean)
+        .join(" ")
+    );
+
+  if (!text) {
+    return "";
+  }
+
+  if (
+    /\b(hvac|air conditioner|air conditioning|furnace|heat pump)\b/
+      .test(text)
+  ) {
+    return "hvac";
+  }
+
+  if (
+    /\b(water heater|tankless)\b/
+      .test(text)
+  ) {
+    return "water_heater";
+  }
+
+  if (
+    /\b(roof|shingle|underlayment)\b/
+      .test(text)
+  ) {
+    return "roof";
+  }
+
+  if (
+    /\b(electrical|panel|breaker)\b/
+      .test(text)
+  ) {
+    return "electrical";
+  }
+
+  if (
+    /\b(plumbing|plumber|sewer|drain|pipe|repiping|repipe)\b/
+      .test(text)
+  ) {
+    return "plumbing";
+  }
+
+  if (
+    /\b(window|windows)\b/
+      .test(text)
+  ) {
+    return "windows";
+  }
+
+  if (
+    /\b(door|doors)\b/
+      .test(text)
+  ) {
+    return "doors";
+  }
+
+  if (
+    /\b(solar|photovoltaic)\b/
+      .test(text)
+  ) {
+    return "solar";
+  }
+
+  if (
+    /\b(appliance|appliances|dishwasher|range|oven|refrigerator)\b/
+      .test(text)
+  ) {
+    return "appliances";
+  }
+
+  if (
+    /\b(pest|termite)\b/
+      .test(text)
+  ) {
+    return "pest";
+  }
+
+  if (
+    /\b(pool|spa)\b/
+      .test(text)
+  ) {
+    return "pool";
+  }
+
+  if (
+    /\b(kitchen)\b/
+      .test(text)
+  ) {
+    return "kitchen";
+  }
+
+  if (
+    /\b(bathroom|bath)\b/
+      .test(text)
+  ) {
+    return "bathroom";
+  }
+
+  if (
+    /\b(floor|flooring|tile|carpet)\b/
+      .test(text)
+  ) {
+    return "flooring";
+  }
+
+  if (
+    /\b(irrigation|landscape|landscaping)\b/
+      .test(text)
+  ) {
+    return "landscaping";
+  }
+
+  return normalizeHomeownerText(
+    entry?.update_type ||
+    entry?.item_label ||
+    entry?.system_name ||
+    entry?.category ||
+    entry?.title ||
+    ""
+  );
+}
+
+function homeownerLinkedId(entry) {
+  const table =
+    originalTable(entry);
+
+  const explicitLinkedId =
+    clean(
+      entry?.homeowner_update_id ||
+      entry?.homeownerUpdateId ||
+      entry?.source_record_id ||
+      entry?.sourceRecordId ||
+      entry?.original_record_id ||
+      entry?.originalRecordId ||
+      entry?.original_id ||
+      entry?.originalId
+    );
+
+  if (explicitLinkedId) {
+    return explicitLinkedId;
+  }
+
+  if (
+    table ===
+      "homeowner_updates"
+  ) {
+    return clean(
+      entry?.id
+    );
+  }
+
+  return "";
+}
+
+function homeownerEntryRank(entry) {
+  const title =
+    normalizeHomeownerText(
+      entry?.item_label ||
+      entry?.update_type ||
+      entry?.system_name ||
+      entry?.category ||
+      ""
+    );
+
+  const statement =
+    normalizeHomeownerText(
+      entry?.statement ||
+      entry?.description ||
+      entry?.note ||
+      ""
+    );
+
+  const eventDate =
+    clean(
+      entry?.event_date ||
+      entry?.approximate_date ||
+      ""
+    );
+
+  let score = 0;
+
+  if (
+    homeownerLinkedId(entry)
+  ) {
+    score += 100;
+  }
+
+  if (
+    eventDate &&
+    !/^\d{4}$/.test(eventDate)
+  ) {
+    score += 20;
+  }
+
+  if (
+    title.split(" ").length > 1
+  ) {
+    score += 10;
+  }
+
+  score += Math.min(
+    statement.length,
+    200
+  ) / 20;
+
+  return score;
+}
+
+function dedupeHomeownerEntries(entries) {
+  const linkedGroups =
+    new Map();
+
+  const unlinked = [];
+
+  (
+    Array.isArray(entries)
+      ? entries
+      : []
+  ).forEach(entry => {
+    const linkedId =
+      homeownerLinkedId(entry);
+
+    if (linkedId) {
+      const key =
+        `linked:${linkedId}`;
+
+      const existing =
+        linkedGroups.get(key);
+
+      if (
+        !existing ||
+        homeownerEntryRank(entry) >
+          homeownerEntryRank(existing)
+      ) {
+        linkedGroups.set(
+          key,
+          entry
+        );
+      }
+
+      return;
+    }
+
+    unlinked.push(entry);
+  });
+
+  const semanticGroups =
+    new Map();
+
+  unlinked.forEach(entry => {
+    const system =
+      homeownerSystemKey(entry);
+
+    const year =
+      homeownerYear(entry);
+
+    const fallbackLabel =
+      normalizeHomeownerText(
+        entry?.item_label ||
+        entry?.update_type ||
+        entry?.system_name ||
+        entry?.category ||
+        entry?.title ||
+        entry?.statement ||
+        "homeowner update"
+      );
+
+    const key =
+      system && year
+        ? `semantic:${system}|${year}`
+        : `semantic:${fallbackLabel}|${year}`;
+
+    const existing =
+      semanticGroups.get(key);
+
+    if (
+      !existing ||
+      homeownerEntryRank(entry) >
+        homeownerEntryRank(existing)
+    ) {
+      semanticGroups.set(
+        key,
+        entry
+      );
+    }
+  });
+
+  return [
+    ...linkedGroups.values(),
+    ...semanticGroups.values()
+  ];
+}
+
+
+/* =========================================================
+   OTHER HISTORY TYPES
+   ========================================================= */
 
 function isContractorEntry(entry) {
   const type =
@@ -376,6 +796,11 @@ function uniqueEntries(entries) {
   );
 }
 
+
+/* =========================================================
+   PROPERTY LOOKUP
+   ========================================================= */
+
 async function resolvePropertyId(
   req
 ) {
@@ -421,6 +846,11 @@ async function resolvePropertyId(
     results[0]?.id
   );
 }
+
+
+/* =========================================================
+   API HANDLER
+   ========================================================= */
 
 export default async function handler(
   req,
@@ -539,15 +969,26 @@ export default async function handler(
         )
       );
 
+    /*
+     * Homeowner records are cleaned before they are
+     * exposed publicly.
+     *
+     * This prevents a homeowner_updates row and its
+     * matching property-history/evidence row from being
+     * counted as two separate homeowner updates.
+     */
+    const homeownerEntries =
+      dedupeHomeownerEntries(
+        rawEntries.filter(
+          isHomeownerEntry
+        )
+      );
+
     const homeownerUpdates =
       uniqueEntries(
-        rawEntries
-          .filter(
-            isHomeownerEntry
-          )
-          .map(
-            publicTimelineEntry
-          )
+        homeownerEntries.map(
+          publicTimelineEntry
+        )
       );
 
     const contractorRecords =
