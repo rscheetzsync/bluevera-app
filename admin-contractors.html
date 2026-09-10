@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contractor Accounts | BlueVera Admin</title>
+
+  <link rel="icon" type="image/png" sizes="48x48" href="/blue-check.png">
+  <link rel="shortcut icon" href="/blue-check.png">
+  <link rel="apple-touch-icon" href="/blue-check.png">
+
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --navy:#082c57; --blue:#0b73e8; --blue-dark:#075fc2; --page:#eef4fb;
+      --card:#fff; --line:#d8e3f0; --text:#0b1736; --muted:#667085;
+      --green:#11834a; --green-bg:#e9f8ef; --amber:#996100; --amber-bg:#fff5d8;
+      --red:#b42318; --red-bg:#ffebea; --gray-bg:#f3f4f6;
+    }
+    body { margin:0; font-family:Arial,Helvetica,sans-serif; background:var(--page); color:var(--text); min-height:100vh; }
+    .topbar { height:74px; background:#fff; border-bottom:1px solid #dce5f0; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:0 28px; position:sticky; top:0; z-index:50; }
+    .brand { display:flex; align-items:center; gap:16px; min-width:0; }
+    .brand img { height:30px; width:auto; display:block; }
+    .brand-copy h1 { margin:0; font-size:22px; line-height:1.1; }
+    .brand-copy div { margin-top:3px; color:#526179; font-size:12px; }
+    .top-actions { display:flex; align-items:center; gap:10px; }
+    .btn { border:1px solid #ccd8e8; background:#fff; color:var(--text); border-radius:9px; padding:10px 15px; font:inherit; font-size:13px; font-weight:900; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:38px; }
+    .btn:hover { background:#f8fbff; }
+    .btn-primary { color:#fff; background:var(--blue); border-color:var(--blue); }
+    .btn-primary:hover { background:var(--blue-dark); }
+    .btn-danger { color:var(--red); border-color:#f0b8b3; background:#fff; }
+    .btn-success { color:#fff; border-color:var(--green); background:var(--green); }
+    .btn-warning { color:#fff; border-color:#a86800; background:#a86800; }
+    .btn-small { padding:8px 11px; min-height:34px; font-size:12px; }
+    .btn:disabled { opacity:.55; cursor:not-allowed; }
+    main { width:min(1480px,calc(100% - 40px)); margin:28px auto 50px; }
+    .hero { background:linear-gradient(100deg,#0a376d,#0d6abd); border-radius:18px; padding:28px 30px; color:#fff; display:flex; align-items:center; justify-content:space-between; gap:20px; box-shadow:0 10px 26px rgba(17,67,124,.14); }
+    .hero h2 { margin:0 0 7px; font-size:28px; }
+    .hero p { margin:0; color:#e7f2ff; line-height:1.45; font-size:14px; }
+    .hero-badge { border:1px solid rgba(255,255,255,.42); background:rgba(255,255,255,.10); border-radius:999px; padding:10px 15px; font-size:12px; font-weight:900; white-space:nowrap; }
+    .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:20px 0; }
+    .summary-card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; box-shadow:0 5px 15px rgba(15,54,103,.05); }
+    .summary-label { color:var(--muted); font-size:12px; font-weight:800; margin-bottom:7px; }
+    .summary-value { font-size:28px; font-weight:900; letter-spacing:-.5px; }
+    .toolbar { background:#fff; border:1px solid var(--line); border-radius:14px; padding:14px; display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+    .search { flex:1; min-width:220px; border:1px solid #ccd8e8; border-radius:9px; padding:11px 13px; font:inherit; font-size:14px; outline:none; }
+    .search:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(11,115,232,.10); }
+    .select { border:1px solid #ccd8e8; border-radius:9px; padding:11px 13px; background:#fff; color:var(--text); font:inherit; font-size:13px; font-weight:700; }
+    .status-message { display:none; margin-bottom:16px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:#fff; font-size:13px; font-weight:700; }
+    .status-message.error { display:block; background:var(--red-bg); border-color:#ffc4bf; color:var(--red); }
+    .status-message.success { display:block; background:var(--green-bg); border-color:#bfe7ce; color:var(--green); }
+    .layout { display:grid; grid-template-columns:minmax(460px,.92fr) minmax(520px,1.08fr); gap:16px; align-items:start; }
+    .panel { background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:0 7px 20px rgba(15,54,103,.06); overflow:hidden; }
+    .panel-head { padding:17px 18px; border-bottom:1px solid #e6edf6; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .panel-head h3 { margin:0; font-size:17px; }
+    .panel-head span { color:var(--muted); font-size:12px; }
+    .contractor-list { max-height:calc(100vh - 310px); overflow-y:auto; }
+    .contractor-row { padding:16px 18px; border-bottom:1px solid #edf1f6; cursor:pointer; transition:background .15s ease; }
+    .contractor-row:hover { background:#f8fbff; }
+    .contractor-row.active { background:#eef6ff; box-shadow:inset 4px 0 0 var(--blue); }
+    .row-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+    .business-name { font-weight:900; font-size:15px; line-height:1.3; }
+    .row-meta { margin-top:5px; color:var(--muted); font-size:12px; line-height:1.45; }
+    .row-flags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
+    .badge { display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:5px 9px; font-size:11px; font-weight:900; white-space:nowrap; }
+    .badge.verified { background:var(--green-bg); color:var(--green); }
+    .badge.pending { background:var(--amber-bg); color:var(--amber); }
+    .badge.rejected,.badge.attention { background:var(--red-bg); color:var(--red); }
+    .badge.missing { background:var(--gray-bg); color:#5e6674; }
+    .detail { min-height:530px; }
+    .detail-body { padding:20px; }
+    .empty { padding:60px 30px; text-align:center; color:var(--muted); }
+    .empty strong { display:block; color:var(--text); font-size:17px; margin-bottom:7px; }
+    .profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:18px; }
+    .info { border:1px solid #e1e9f3; border-radius:10px; background:#fbfdff; padding:12px; min-width:0; }
+    .info-label { color:var(--muted); font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.4px; margin-bottom:5px; }
+    .info-value { font-size:13px; font-weight:800; overflow-wrap:anywhere; }
+    .section-title { margin:21px 0 10px; font-size:15px; font-weight:900; }
+    .credential-card { border:1px solid #dce6f2; border-radius:13px; padding:15px; margin-bottom:12px; }
+    .credential-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+    .credential-head h4 { margin:0 0 4px; font-size:14px; }
+    .credential-head p { margin:0; color:var(--muted); font-size:12px; line-height:1.4; }
+    .document-row { border-top:1px solid #edf1f6; padding-top:11px; margin-top:11px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .document-name { min-width:0; font-size:12px; font-weight:800; overflow-wrap:anywhere; }
+    .document-date { color:var(--muted); font-size:11px; margin-top:3px; }
+    .credential-actions { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+    .work-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .work-table th,.work-table td { padding:10px 8px; text-align:left; border-bottom:1px solid #edf1f6; vertical-align:top; }
+    .work-table th { color:#5b6678; font-size:10px; letter-spacing:.3px; text-transform:uppercase; }
+    .loading { padding:50px 30px; text-align:center; color:var(--muted); font-weight:800; }
+    .footer-note { text-align:center; margin-top:22px; color:#7a8699; font-size:11px; }
+    @media (max-width:1050px) { .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr));} .layout{grid-template-columns:1fr;} .contractor-list{max-height:520px;} }
+    @media (max-width:700px) { .topbar{height:auto;padding:14px 16px;align-items:flex-start;} .brand-copy h1{font-size:17px;} .brand-copy div{display:none;} .top-actions{flex-wrap:wrap;justify-content:flex-end;} main{width:min(100% - 22px,1480px);margin-top:14px;} .hero{padding:20px;align-items:flex-start;flex-direction:column;} .hero h2{font-size:23px;} .summary-grid{grid-template-columns:1fr 1fr;} .toolbar{align-items:stretch;flex-direction:column;} .profile-grid{grid-template-columns:1fr;} .document-row,.credential-head{align-items:flex-start;flex-direction:column;} }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="logo.png?v=2" alt="BlueVera">
+      <div class="brand-copy">
+        <h1>Contractor Accounts</h1>
+        <div>BlueVera Admin · Contractor credential review</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <a class="btn" href="admin-dashboard.html">← Admin Dashboard</a>
+      <a class="btn" href="https://bluevera.org/" target="_blank" rel="noopener">Property Search</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h2>Contractor credential review</h2>
+        <p>Review contractor profiles, open privately stored ROC license and insurance documents, and approve each credential independently.</p>
+      </div>
+      <div class="hero-badge">Restricted Admin Access</div>
+    </section>
+
+    <section class="summary-grid">
+      <div class="summary-card"><div class="summary-label">Total Contractors</div><div class="summary-value" id="countTotal">—</div></div>
+      <div class="summary-card"><div class="summary-label">Pending Review</div><div class="summary-value" id="countPending">—</div></div>
+      <div class="summary-card"><div class="summary-label">Verified</div><div class="summary-value" id="countVerified">—</div></div>
+      <div class="summary-card"><div class="summary-label">Needs Attention</div><div class="summary-value" id="countAttention">—</div></div>
+    </section>
+
+    <section class="toolbar">
+      <input class="search" id="searchInput" type="search" placeholder="Search contractor, contact, email, ROC number, or service area...">
+      <select class="select" id="statusFilter">
+        <option value="all">All statuses</option>
+        <option value="Pending Review">Pending Review</option>
+        <option value="Verified">Verified</option>
+        <option value="Needs Attention">Needs Attention</option>
+        <option value="Missing Documents">Missing Documents</option>
+      </select>
+      <button class="btn btn-primary" id="refreshBtn" type="button">Refresh</button>
+    </section>
+
+    <div class="status-message" id="statusMessage"></div>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-head"><div><h3>Contractor Accounts</h3><span id="listCount">Loading...</span></div></div>
+        <div class="contractor-list" id="contractorList"><div class="loading">Loading contractor accounts...</div></div>
+      </div>
+
+      <div class="panel detail">
+        <div class="panel-head"><div><h3>Contractor Review</h3><span>License and insurance approval</span></div></div>
+        <div class="detail-body" id="detailBody">
+          <div class="empty"><strong>Select a contractor</strong>Choose a contractor account on the left to review credentials.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer-note">BlueVera internal admin tool · Credential documents remain private</div>
+  </main>
+
+  <script>
+    const API_URL = "/api/admin-contractors";
+    let allContractors = [];
+    let selectedContractorId = "";
+    let actionInProgress = false;
+
+    function clean(value){ return String(value ?? "").trim(); }
+    function escapeHtml(value){ return String(value ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;"); }
+
+    function getAdminAccessToken(){
+      return localStorage.getItem("blueveraAdminAccessToken") || localStorage.getItem("bluevera_admin_access_token") || sessionStorage.getItem("blueveraAdminAccessToken") || "";
+    }
+
+    function clearAdminSession(){
+      localStorage.removeItem("blueveraAdminAccessToken");
+      localStorage.removeItem("blueveraAdminRefreshToken");
+      localStorage.removeItem("blueveraAdminAuthUserId");
+      localStorage.removeItem("bluevera_admin_access_token");
+      localStorage.removeItem("bluevera_admin_logged_in");
+      sessionStorage.removeItem("bluevera_admin_logged_in");
+      sessionStorage.removeItem("blueveraAdminLoggedIn");
+      sessionStorage.removeItem("blueveraAdminEmail");
+      sessionStorage.removeItem("blueveraAdminRole");
+    }
+
+    function requireToken(){
+      const token = getAdminAccessToken();
+      if(!token){
+        alert("Your BlueVera admin session is missing. Please log in again.");
+        window.location.href = "index.html";
+        return "";
+      }
+      return token;
+    }
+
+    async function apiRequest(url, options = {}){
+      const token = requireToken();
+      if(!token) throw new Error("Admin login session is required.");
+      const response = await fetch(url, {
+        ...options,
+        headers:{ "Content-Type":"application/json", "Authorization":`Bearer ${token}`, ...(options.headers || {}) }
+      });
+      const data = await response.json().catch(() => ({}));
+      if(response.status === 401 || response.status === 403){
+        clearAdminSession();
+        alert(data.error || "Your BlueVera admin session is invalid or expired. Please log in again.");
+        window.location.href = "index.html";
+        throw new Error(data.error || "Admin session expired.");
+      }
+      if(!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+      return data;
+    }
+
+    function showMessage(message,type="success"){
+      const box=document.getElementById("statusMessage");
+      box.textContent=message;
+      box.className=`status-message ${type}`;
+      clearTimeout(showMessage.timer);
+      showMessage.timer=setTimeout(()=>{box.className="status-message";box.textContent="";},5000);
+    }
+
+    function normalizedStatus(value){ return clean(value) || "Missing Documents"; }
+    function statusClass(status){ const s=normalizedStatus(status).toLowerCase(); if(s==="verified")return"verified"; if(s==="pending review")return"pending"; if(s==="rejected")return"rejected"; if(s==="needs attention")return"attention"; return"missing"; }
+    function statusBadge(status){ const safe=normalizedStatus(status); return `<span class="badge ${statusClass(safe)}">${escapeHtml(safe)}</span>`; }
+    function formatDate(value){ if(!value)return"—"; const d=new Date(value); if(Number.isNaN(d.getTime()))return escapeHtml(value); return d.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); }
+    function documentTypeMatch(document,wanted){ return clean(document?.document_type).toLowerCase()===clean(wanted).toLowerCase(); }
+    function newestDocument(contractor,type){ const docs=Array.isArray(contractor?.documents)?contractor.documents:[]; return docs.find(doc=>documentTypeMatch(doc,type))||null; }
+
+    function updateCounts(counts={}){
+      document.getElementById("countTotal").textContent=Number(counts.total||0);
+      document.getElementById("countPending").textContent=Number(counts.pending||0);
+      document.getElementById("countVerified").textContent=Number(counts.verified||0);
+      document.getElementById("countAttention").textContent=Number(counts.needsAttention||0);
+    }
+
+    function filteredContractors(){
+      const query=clean(document.getElementById("searchInput").value).toLowerCase();
+      const status=document.getElementById("statusFilter").value;
+      return allContractors.filter(c=>{
+        if(status!=="all" && c.overallStatus!==status) return false;
+        if(!query) return true;
+        return [c.businessName,c.contactName,c.email,c.phone,c.serviceArea,c.licenseNumber,c.overallStatus].join(" ").toLowerCase().includes(query);
+      });
+    }
+
+    function renderContractorList(){
+      const list=document.getElementById("contractorList");
+      const contractors=filteredContractors();
+      document.getElementById("listCount").textContent=`${contractors.length} account${contractors.length===1?"":"s"}`;
+      if(!contractors.length){ list.innerHTML=`<div class="empty"><strong>No contractors found</strong>Try changing the search or status filter.</div>`; return; }
+      list.innerHTML=contractors.map(c=>`
+        <div class="contractor-row ${c.id===selectedContractorId?"active":""}" data-id="${escapeHtml(c.id)}">
+          <div class="row-top"><div><div class="business-name">${escapeHtml(c.businessName||"Unnamed Contractor")}</div><div class="row-meta">${escapeHtml(c.contactName||"No contact name")}<br>ROC: ${escapeHtml(c.licenseNumber||"Not entered")} · ${escapeHtml(c.serviceArea||"No service area")}</div></div>${statusBadge(c.overallStatus)}</div>
+          <div class="row-flags">${statusBadge(c.licenseStatus)}${statusBadge(c.insuranceStatus)}<span class="badge missing">${Number(c.workCount||0)} work item${Number(c.workCount||0)===1?"":"s"}</span></div>
+        </div>`).join("");
+      list.querySelectorAll(".contractor-row").forEach(row=>row.addEventListener("click",()=>selectContractor(row.dataset.id)));
+    }
+
+    async function loadContractors(options={}){
+      const preserveSelection=options.preserveSelection!==false;
+      const list=document.getElementById("contractorList");
+      if(!preserveSelection) selectedContractorId="";
+      list.innerHTML=`<div class="loading">Loading contractor accounts...</div>`;
+      try{
+        const result=await apiRequest(`${API_URL}?action=list`);
+        allContractors=Array.isArray(result.contractors)?result.contractors:[];
+        updateCounts(result.counts||{});
+        renderContractorList();
+        if(preserveSelection && selectedContractorId && allContractors.some(i=>i.id===selectedContractorId)) await selectContractor(selectedContractorId,false);
+      }catch(error){ list.innerHTML=`<div class="empty"><strong>Could not load contractors</strong>${escapeHtml(error.message)}</div>`; }
+    }
+
+    function credentialCard(contractor,type,label,status,uploaded){
+      const doc=newestDocument(contractor,type);
+      const credentialKey=label==="ROC License"?"license":"insurance";
+      return `
+        <div class="credential-card">
+          <div class="credential-head"><div><h4>${escapeHtml(label)}</h4><p>${uploaded?"Credential document is stored privately and available for admin review.":"Required credential document has not been found."}</p></div>${statusBadge(status)}</div>
+          ${doc?`<div class="document-row"><div><div class="document-name">${escapeHtml(doc.file_name||"Credential document")}</div><div class="document-date">Uploaded ${formatDate(doc.created_at)}</div></div><button class="btn btn-small" type="button" onclick="openDocument('${escapeHtml(doc.id)}')">View Document</button></div>`:""}
+          <div class="credential-actions">
+            <button class="btn btn-success btn-small" type="button" ${!doc?"disabled":""} onclick="reviewCredential('${escapeHtml(contractor.id)}','${credentialKey}','verified')">Approve</button>
+            <button class="btn btn-warning btn-small" type="button" ${!doc?"disabled":""} onclick="reviewCredential('${escapeHtml(contractor.id)}','${credentialKey}','pending')">Pending</button>
+            <button class="btn btn-danger btn-small" type="button" ${!doc?"disabled":""} onclick="reviewCredential('${escapeHtml(contractor.id)}','${credentialKey}','rejected')">Reject</button>
+          </div>
+        </div>`;
+    }
+
+    function renderDetail(c){
+      const body=document.getElementById("detailBody");
+      const workItems=Array.isArray(c.workItems)?c.workItems:[];
+      body.innerHTML=`
+        <div class="row-top" style="margin-bottom:16px;"><div><div class="business-name" style="font-size:20px;">${escapeHtml(c.businessName||"Unnamed Contractor")}</div><div class="row-meta">Account created ${formatDate(c.createdAt)}</div></div>${statusBadge(c.overallStatus)}</div>
+        <div class="profile-grid">
+          <div class="info"><div class="info-label">Contact</div><div class="info-value">${escapeHtml(c.contactName||"—")}</div></div>
+          <div class="info"><div class="info-label">Phone</div><div class="info-value">${escapeHtml(c.phone||"—")}</div></div>
+          <div class="info"><div class="info-label">Email</div><div class="info-value">${escapeHtml(c.email||"—")}</div></div>
+          <div class="info"><div class="info-label">Service Area</div><div class="info-value">${escapeHtml(c.serviceArea||"—")}</div></div>
+          <div class="info"><div class="info-label">ROC License Number</div><div class="info-value">${escapeHtml(c.licenseNumber||"—")}</div></div>
+          <div class="info"><div class="info-label">Completed Work Submissions</div><div class="info-value">${Number(c.workCount||0)}</div></div>
+        </div>
+        <div class="section-title">Credential Review</div>
+        ${credentialCard(c,"ROC License Document","ROC License",c.licenseStatus,c.licenseDocumentUploaded)}
+        ${credentialCard(c,"Certificate of Insurance","Insurance",c.insuranceStatus,c.insuranceDocumentUploaded)}
+        <div class="section-title">Recent Completed Work</div>
+        ${workItems.length?`<div style="overflow-x:auto;"><table class="work-table"><thead><tr><th>Property</th><th>Work Type</th><th>Completed</th><th>Status</th></tr></thead><tbody>${workItems.slice(0,10).map(item=>`<tr><td>${escapeHtml(item.property_address||"—")}</td><td>${escapeHtml(item.work_type||"—")}</td><td>${formatDate(item.completed_date)}</td><td>${escapeHtml(item.status||"—")}</td></tr>`).join("")}</tbody></table></div>`:`<div class="info"><div class="info-value">No completed-work submissions yet.</div></div>`}
+      `;
+    }
+
+    async function selectContractor(id,rerenderList=true){
+      if(!id)return;
+      selectedContractorId=id;
+      if(rerenderList) renderContractorList();
+      const body=document.getElementById("detailBody");
+      body.innerHTML=`<div class="loading">Loading contractor review...</div>`;
+      try{
+        const result=await apiRequest(`${API_URL}?action=detail&id=${encodeURIComponent(id)}`);
+        if(!result.contractor)throw new Error("Contractor record was not returned.");
+        renderDetail(result.contractor);
+      }catch(error){ body.innerHTML=`<div class="empty"><strong>Could not load contractor</strong>${escapeHtml(error.message)}</div>`; }
+    }
+
+    async function openDocument(documentId){
+      if(!documentId||actionInProgress)return;
+      actionInProgress=true;
+      try{
+        const result=await apiRequest(`${API_URL}?action=document&documentId=${encodeURIComponent(documentId)}`);
+        const signedUrl=result?.document?.signedUrl;
+        if(!signedUrl)throw new Error("BlueVera did not receive a secure document link.");
+        window.open(signedUrl,"_blank","noopener,noreferrer");
+      }catch(error){ showMessage(error.message,"error"); }
+      finally{ actionInProgress=false; }
+    }
+
+    async function reviewCredential(contractorId,credential,decision){
+      if(!contractorId||!credential||!decision||actionInProgress)return;
+      const actionLabel=decision==="verified"?"approve":decision==="rejected"?"reject":"return to pending review";
+      const credentialLabel=credential==="license"?"ROC license":"insurance";
+      if(decision!=="pending" && !confirm(`Are you sure you want to ${actionLabel} this ${credentialLabel} credential?`))return;
+      actionInProgress=true;
+      try{
+        const result=await apiRequest(API_URL,{method:"POST",body:JSON.stringify({action:"review",contractorId,credential,decision})});
+        showMessage(result.message||`${credentialLabel} status updated.`,"success");
+        const updated=result.contractor;
+        if(updated?.id){ const index=allContractors.findIndex(i=>i.id===updated.id); if(index>=0)allContractors[index]={...allContractors[index],...updated}; renderDetail(updated); renderContractorList(); }
+        await loadContractors({preserveSelection:true});
+      }catch(error){ showMessage(error.message,"error"); }
+      finally{ actionInProgress=false; }
+    }
+
+    document.getElementById("searchInput").addEventListener("input",renderContractorList);
+    document.getElementById("statusFilter").addEventListener("change",renderContractorList);
+    document.getElementById("refreshBtn").addEventListener("click",()=>loadContractors({preserveSelection:true}));
+
+    if(requireToken()) loadContractors({preserveSelection:false});
+  </script>
+</body>
+</html>
