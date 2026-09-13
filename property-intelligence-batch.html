@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Property Intelligence Batch | BlueVera Admin</title>
+
+  <style>
+    :root{
+      --navy:#082f63;
+      --blue:#0a7ff2;
+      --blue-dark:#0754ad;
+      --page:#eef4fb;
+      --card:#ffffff;
+      --text:#13233f;
+      --muted:#617089;
+      --border:#d6e2f0;
+      --success:#198754;
+      --warning:#b76b00;
+      --danger:#c93f3f;
+      --shadow:0 14px 34px rgba(18,54,94,.10);
+    }
+
+    *{ box-sizing:border-box; }
+
+    body{
+      margin:0;
+      font-family:Arial, Helvetica, sans-serif;
+      background:var(--page);
+      color:var(--text);
+    }
+
+    .topbar{
+      min-height:76px;
+      background:#fff;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:20px;
+      padding:14px 28px;
+      position:sticky;
+      top:0;
+      z-index:20;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:18px;
+      min-width:0;
+    }
+
+    .logo{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-weight:800;
+      color:var(--navy);
+      letter-spacing:.4px;
+      white-space:nowrap;
+    }
+
+    .logo-mark{
+      color:var(--blue);
+      font-size:24px;
+      line-height:1;
+    }
+
+    .title-wrap h1{
+      margin:0;
+      font-size:22px;
+      color:var(--navy);
+    }
+
+    .title-wrap p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    .top-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:11px 16px;
+      text-decoration:none;
+      font-weight:700;
+      font-size:14px;
+      cursor:pointer;
+      background:#fff;
+      color:var(--navy);
+      transition:.18s ease;
+    }
+
+    .btn:hover{
+      transform:translateY(-1px);
+      box-shadow:0 8px 18px rgba(14,58,107,.10);
+    }
+
+    .btn:disabled{
+      opacity:.55;
+      cursor:not-allowed;
+      transform:none;
+      box-shadow:none;
+    }
+
+    .btn-primary{
+      background:var(--blue-dark);
+      border-color:var(--blue-dark);
+      color:#fff;
+    }
+
+    .btn-danger{
+      color:var(--danger);
+      border-color:#efc0c0;
+      background:#fff7f7;
+    }
+
+    main{
+      max-width:1380px;
+      margin:0 auto;
+      padding:30px 24px 54px;
+    }
+
+    .hero{
+      background:linear-gradient(135deg,var(--navy),#0b5da9);
+      color:#fff;
+      border-radius:18px;
+      padding:28px 30px;
+      box-shadow:var(--shadow);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:24px;
+      margin-bottom:20px;
+    }
+
+    .hero h2{
+      margin:0 0 8px;
+      font-size:28px;
+    }
+
+    .hero p{
+      margin:0;
+      color:#dcecff;
+      max-width:850px;
+      line-height:1.5;
+    }
+
+    .hero-badge{
+      flex:0 0 auto;
+      border:1px solid rgba(255,255,255,.35);
+      background:rgba(255,255,255,.12);
+      border-radius:999px;
+      padding:10px 16px;
+      font-size:13px;
+      font-weight:700;
+    }
+
+    .summary-grid{
+      display:grid;
+      grid-template-columns:repeat(5,minmax(0,1fr));
+      gap:14px;
+      margin-bottom:18px;
+    }
+
+    .metric{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:18px;
+      box-shadow:0 7px 20px rgba(17,56,98,.05);
+    }
+
+    .metric-label{
+      font-size:12px;
+      font-weight:700;
+      color:var(--muted);
+      margin-bottom:8px;
+    }
+
+    .metric-value{
+      font-size:29px;
+      line-height:1;
+      font-weight:800;
+      color:var(--navy);
+    }
+
+    .metric-note{
+      margin-top:7px;
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .layout{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 370px;
+      gap:18px;
+      align-items:start;
+    }
+
+    .panel,.side-card{
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:16px;
+      box-shadow:0 8px 24px rgba(17,56,98,.06);
+    }
+
+    .panel{ overflow:hidden; }
+
+    .panel-header{
+      padding:18px 20px;
+      border-bottom:1px solid var(--border);
+    }
+
+    .panel-header h3,.side-card h3{
+      margin:0 0 6px;
+      color:var(--navy);
+      font-size:18px;
+    }
+
+    .panel-header p,.side-card p{
+      margin:0;
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+    }
+
+    .panel-body{ padding:20px; }
+
+    .zip-finder{
+      border:1px solid #cfe0f2;
+      border-radius:14px;
+      background:#f7fbff;
+      padding:16px;
+    }
+
+    .zip-finder-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      margin-bottom:13px;
+    }
+
+    .zip-finder-head h4{
+      margin:0 0 5px;
+      color:var(--navy);
+      font-size:16px;
+    }
+
+    .zip-finder-head p{
+      margin:0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+    }
+
+    .zip-grid{
+      display:grid;
+      grid-template-columns:minmax(160px,220px) auto;
+      gap:10px;
+      align-items:end;
+    }
+
+    .label{
+      display:block;
+      margin-bottom:7px;
+      font-size:12px;
+      font-weight:800;
+      color:var(--navy);
+    }
+
+    .field,.select{
+      width:100%;
+      height:44px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:11px 12px;
+      font-size:14px;
+      color:var(--text);
+      background:#fff;
+      outline:none;
+    }
+
+    .field:focus,.select:focus{
+      border-color:#7db8f4;
+      box-shadow:0 0 0 3px rgba(10,127,242,.10);
+    }
+
+    .zip-result{
+      display:none;
+      margin-top:13px;
+      border-top:1px solid #dbe7f3;
+      padding-top:13px;
+    }
+
+    .zip-result.show{ display:block; }
+
+    .zip-summary{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      margin-bottom:10px;
+    }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      border-radius:999px;
+      padding:6px 9px;
+      font-size:11px;
+      font-weight:800;
+      border:1px solid transparent;
+      white-space:nowrap;
+    }
+
+    .pill-good{
+      color:#11643f;
+      background:#edf9f2;
+      border-color:#bfe7cf;
+    }
+
+    .pill-warn{
+      color:#875000;
+      background:#fff7e8;
+      border-color:#f0cf96;
+    }
+
+    .pill-bad{
+      color:#9b2c2c;
+      background:#fff1f1;
+      border-color:#efc4c4;
+    }
+
+    .action-row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:14px;
+    }
+
+    .zip-list{
+      max-height:300px;
+      overflow:auto;
+      border:1px solid var(--border);
+      border-radius:10px;
+      background:#fff;
+    }
+
+    .zip-list-row{
+      display:grid;
+      grid-template-columns:90px minmax(220px,1fr) 80px 95px;
+      gap:12px;
+      padding:9px 11px;
+      border-bottom:1px solid #edf2f7;
+      font-size:12px;
+      align-items:center;
+    }
+
+    .zip-list-row:last-child{ border-bottom:none; }
+
+    .zip-mls{ font-weight:800; color:var(--navy); }
+    .zip-address{ color:#33465f; }
+    .zip-status{ text-align:right; color:var(--success); font-weight:800; }
+
+    .batch-box{
+      margin-top:18px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:16px;
+      background:#fff;
+    }
+
+    .batch-grid{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:12px;
+    }
+
+    .selection-note{
+      margin-top:10px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+
+    .progress-wrap{
+      display:none;
+      margin-top:18px;
+      border-top:1px solid var(--border);
+      padding-top:16px;
+    }
+
+    .progress-wrap.show{ display:block; }
+
+    .progress-bar{
+      width:100%;
+      height:12px;
+      border-radius:999px;
+      background:#e9eef5;
+      overflow:hidden;
+      margin:10px 0 8px;
+    }
+
+    .progress-fill{
+      height:100%;
+      width:0%;
+      background:var(--blue-dark);
+      transition:width .2s ease;
+    }
+
+    .progress-text{
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .results-table-wrap{
+      margin-top:16px;
+      overflow-x:auto;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+    }
+
+    table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:980px;
+    }
+
+    th{
+      text-align:left;
+      font-size:11px;
+      color:var(--muted);
+      background:#f8fbff;
+      padding:11px 12px;
+      border-bottom:1px solid var(--border);
+      white-space:nowrap;
+    }
+
+    td{
+      padding:11px 12px;
+      border-bottom:1px solid #edf2f7;
+      font-size:12px;
+      vertical-align:middle;
+    }
+
+    .side-stack{
+      display:grid;
+      gap:18px;
+    }
+
+    .side-card{ padding:18px; }
+
+    .check-row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:14px;
+      padding:11px 0;
+      border-bottom:1px solid #edf2f7;
+      font-size:13px;
+    }
+
+    .check-row:last-child{ border-bottom:none; }
+    .check-label{ color:var(--muted); }
+    .check-value{ font-weight:800; color:var(--navy); text-align:right; }
+
+    .footer-note{
+      text-align:center;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:28px;
+    }
+
+    @media (max-width:1100px){
+      .summary-grid{ grid-template-columns:repeat(3,minmax(0,1fr)); }
+      .layout{ grid-template-columns:1fr; }
+      .side-stack{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+    }
+
+    @media (max-width:760px){
+      .topbar{ align-items:flex-start; flex-direction:column; padding:16px; }
+      main{ padding:22px 14px 40px; }
+      .hero{ flex-direction:column; align-items:flex-start; padding:22px; }
+      .summary-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .zip-grid,.batch-grid,.side-stack{ grid-template-columns:1fr; }
+      .zip-list-row{ grid-template-columns:80px 1fr; }
+      .zip-status{ text-align:left; }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-label="BlueVera">
+        <span class="logo-mark">✓</span>
+        <span>BLUEVERA</span>
+      </div>
+      <div class="title-wrap">
+        <h1>Property Intelligence Batch</h1>
+        <p>Pre-build dashboard intelligence for active ARMLS listings</p>
+      </div>
+    </div>
+
+    <div class="top-actions">
+      <a class="btn" href="admin-dashboard.html">← Admin Dashboard</a>
+      <a class="btn" href="admin-armls-property-intake.html">ARMLS Property Intake</a>
+      <button class="btn btn-danger" id="logoutBtn" type="button">Log Out</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <h2>Preload BlueVera Property Intelligence</h2>
+        <p>
+          Find active ARMLS listings by ZIP code, select a controlled batch, and
+          pre-build the same property intelligence used by the public dashboard.
+          Successful values should be stored as last-known-good data so temporary
+          city, county, or external-source failures do not leave active listings blank.
+        </p>
+      </div>
+      <div class="hero-badge">Restricted Admin Access</div>
+    </section>
+
+    <section class="summary-grid">
+      <div class="metric">
+        <div class="metric-label">ACTIVE FOUND</div>
+        <div class="metric-value" id="metricFound">—</div>
+        <div class="metric-note">ARMLS listings in ZIP</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">SELECTED</div>
+        <div class="metric-value" id="metricSelected">—</div>
+        <div class="metric-note">Properties queued</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">COMPLETE</div>
+        <div class="metric-value" id="metricComplete">—</div>
+        <div class="metric-note">All intelligence saved</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">PARTIAL</div>
+        <div class="metric-value" id="metricPartial">—</div>
+        <div class="metric-note">Some sources unavailable</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">FAILED</div>
+        <div class="metric-value" id="metricFailed">—</div>
+        <div class="metric-note">Could not process</div>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-header">
+          <h3>ARMLS ZIP Batch Builder</h3>
+          <p>
+            Reuses the existing active-listing ZIP lookup from ARMLS Property Intake.
+            Looking up listings is read-only. Nothing is written until you start a batch.
+          </p>
+        </div>
+
+        <div class="panel-body">
+          <div class="zip-finder">
+            <div class="zip-finder-head">
+              <div>
+                <h4>Find Active ARMLS Listings by ZIP Code</h4>
+                <p>
+                  Returns active MLS numbers and addresses from the existing BlueVera ARMLS endpoint.
+                </p>
+              </div>
+              <span class="pill pill-good">Read Only Lookup</span>
+            </div>
+
+            <div class="zip-grid">
+              <div>
+                <label class="label" for="zipLookup">ZIP Code</label>
+                <input
+                  class="field"
+                  id="zipLookup"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="5"
+                  placeholder="85015"
+                  value="85015"
+                />
+              </div>
+
+              <button class="btn btn-primary" id="zipLookupBtn" type="button">
+                Find Active Listings
+              </button>
+            </div>
+
+            <div class="zip-result" id="zipResult">
+              <div class="zip-summary">
+                <span class="pill pill-good" id="zipCountPill">0 active listings</span>
+                <span style="font-size:12px;color:var(--muted);" id="zipResultNote"></span>
+              </div>
+
+              <div class="action-row" style="margin-top:0;margin-bottom:10px;">
+                <button class="btn" id="select25Btn" type="button">Select First 25</button>
+                <button class="btn" id="select50Btn" type="button">Select First 50</button>
+                <button class="btn" id="selectAllBtn" type="button">Select All Found</button>
+                <button class="btn" id="clearSelectionBtn" type="button">Clear Selection</button>
+              </div>
+
+              <div class="zip-list" id="zipListingList"></div>
+            </div>
+          </div>
+
+          <div class="batch-box">
+            <div class="batch-grid">
+              <div>
+                <label class="label" for="batchSize">Controlled Batch Size</label>
+                <select class="select" id="batchSize">
+                  <option value="5">5 at a time</option>
+                  <option value="10" selected>10 at a time</option>
+                  <option value="25">25 at a time</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="label" for="pauseMs">Pause Between Properties</label>
+                <select class="select" id="pauseMs">
+                  <option value="750">0.75 seconds</option>
+                  <option value="1500" selected>1.5 seconds</option>
+                  <option value="3000">3 seconds</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="label" for="retryFailed">Retry Failed Sources</label>
+                <select class="select" id="retryFailed">
+                  <option value="yes" selected>Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="selection-note" id="selectionNote">
+              No listings selected yet.
+            </div>
+
+            <div class="action-row">
+              <button class="btn btn-primary" id="startBatchBtn" type="button" disabled>
+                Start Intelligence Batch
+              </button>
+              <button class="btn" id="stopBatchBtn" type="button" disabled>
+                Stop After Current Property
+              </button>
+            </div>
+
+            <div class="progress-wrap" id="progressWrap">
+              <strong id="progressTitle">Processing property intelligence…</strong>
+              <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <div class="progress-text" id="progressText">0 of 0 processed</div>
+            </div>
+
+            <div class="results-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>MLS</th>
+                    <th>Property</th>
+                    <th>Permits</th>
+                    <th>Additions</th>
+                    <th>SqFt</th>
+                    <th>Zoning</th>
+                    <th>Risk / Transit</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="resultRows">
+                  <tr>
+                    <td colspan="8" style="text-align:center;color:var(--muted);padding:28px;">
+                      No batch has been run yet.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="side-stack">
+        <div class="side-card">
+          <h3>Intelligence Saved</h3>
+          <p>Each successful property should write last-known-good values for:</p>
+
+          <div class="check-row"><span class="check-label">Permits</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">Additions & Improvements</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">County / Listing SqFt</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">Zoning</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">Airport / Railroad / Transit</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">Superfund / ADEQ</span><span class="check-value">✓</span></div>
+          <div class="check-row"><span class="check-label">Floodplain / Floodway</span><span class="check-value">✓</span></div>
+        </div>
+
+        <div class="side-card">
+          <h3>Safety Rules</h3>
+          <p>This batch should follow the same rules as the public intelligence database.</p>
+
+          <div class="check-row">
+            <span class="check-label">Unavailable source</span>
+            <span class="check-value"><span class="pill pill-good">Do not overwrite</span></span>
+          </div>
+
+          <div class="check-row">
+            <span class="check-label">Existing good data</span>
+            <span class="check-value"><span class="pill pill-good">Keep</span></span>
+          </div>
+
+          <div class="check-row">
+            <span class="check-label">New successful value</span>
+            <span class="check-value"><span class="pill pill-good">Update</span></span>
+          </div>
+
+          <div class="check-row">
+            <span class="check-label">Property identity</span>
+            <span class="check-value"><span class="pill pill-good">APN first</span></span>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <h3>Backend Connection</h3>
+          <p>
+            ZIP discovery is already connected. The batch button is prepared to call:
+          </p>
+
+          <div class="check-row">
+            <span class="check-label">ARMLS ZIP lookup</span>
+            <span class="check-value">/api/armls-active-listings-by-zip</span>
+          </div>
+
+          <div class="check-row">
+            <span class="check-label">Intelligence batch</span>
+            <span class="check-value">/api/property-intelligence-batch-run</span>
+          </div>
+
+          <p style="margin-top:12px;">
+            The batch API is the next server-side file to connect.
+          </p>
+        </div>
+      </aside>
+    </section>
+
+    <div class="footer-note">BlueVera internal property intelligence preloading tool</div>
+  </main>
+
+  <script>
+    let zipListings = [];
+    let selectedListings = [];
+    let stopRequested = false;
+
+    function escapeHtml(value){
+      return String(value ?? "")
+        .replace(/&/g,"&amp;")
+        .replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;")
+        .replace(/"/g,"&quot;")
+        .replace(/'/g,"&#039;");
+    }
+
+    function validZip(value){
+      return /^\d{5}$/.test(String(value || "").trim());
+    }
+
+    function setMetric(id,value){
+      document.getElementById(id).textContent = value;
+    }
+
+    function refreshSelection(){
+      selectedListings = zipListings.filter(item => item._selected === true);
+      setMetric("metricSelected", selectedListings.length || "—");
+
+      document.getElementById("selectionNote").textContent =
+        selectedListings.length
+          ? `${selectedListings.length} active listing${selectedListings.length === 1 ? "" : "s"} selected for intelligence processing.`
+          : "No listings selected yet.";
+
+      document.getElementById("startBatchBtn").disabled = selectedListings.length === 0;
+    }
+
+    function renderZipListings(){
+      const list = document.getElementById("zipListingList");
+
+      if (!zipListings.length){
+        list.innerHTML = '<div style="padding:16px;color:var(--muted);">No active ARMLS listings were found for this ZIP code.</div>';
+        return;
+      }
+
+      list.innerHTML = zipListings.map((item,index) => `
+        <label class="zip-list-row">
+          <div>
+            <input
+              type="checkbox"
+              data-index="${index}"
+              ${item._selected ? "checked" : ""}
+              style="margin-right:7px;"
+            />
+            <span class="zip-mls">${escapeHtml(item.mlsNumber || "—")}</span>
+          </div>
+          <div class="zip-address">${escapeHtml(item.address || "Address unavailable")}</div>
+          <div class="zip-status">${escapeHtml(item.status || "Active")}</div>
+          <div>${item._selected ? '<span class="pill pill-good">Selected</span>' : '<span class="pill">—</span>'}</div>
+        </label>
+      `).join("");
+
+      list.querySelectorAll('input[type="checkbox"][data-index]').forEach(box => {
+        box.addEventListener("change", event => {
+          const index = Number(event.target.dataset.index);
+          if (zipListings[index]){
+            zipListings[index]._selected = event.target.checked;
+          }
+          renderZipListings();
+          refreshSelection();
+        });
+      });
+    }
+
+    function selectListings(limit){
+      const count = limit === "all" ? zipListings.length : Math.min(Number(limit), zipListings.length);
+
+      zipListings.forEach((item,index) => {
+        item._selected = index < count;
+      });
+
+      renderZipListings();
+      refreshSelection();
+    }
+
+    async function findListingsByZip(){
+      const button = document.getElementById("zipLookupBtn");
+      const zip = String(document.getElementById("zipLookup").value || "").trim();
+
+      if (!validZip(zip)){
+        alert("Enter a valid 5-digit ZIP code.");
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = "Searching ARMLS…";
+
+      const result = document.getElementById("zipResult");
+      const countPill = document.getElementById("zipCountPill");
+      const note = document.getElementById("zipResultNote");
+
+      try{
+        const response = await fetch(
+          `/api/armls-active-listings-by-zip?zip=${encodeURIComponent(zip)}&limit=1000`,
+          { method:"GET", cache:"no-store" }
+        );
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok){
+          throw new Error(data?.error || "Unable to load active ARMLS listings for this ZIP code.");
+        }
+
+        zipListings = Array.isArray(data?.listings)
+          ? data.listings.map(item => ({ ...item, _selected:false }))
+          : [];
+
+        selectedListings = [];
+
+        setMetric("metricFound", zipListings.length || "—");
+        setMetric("metricSelected", "—");
+
+        countPill.textContent =
+          `${zipListings.length} active listing${zipListings.length === 1 ? "" : "s"}`;
+
+        note.textContent =
+          data?.truncated
+            ? `Showing the first ${zipListings.length}. More listings may exist.`
+            : `ZIP ${zip} • preview only • nothing written until a batch starts`;
+
+        renderZipListings();
+        refreshSelection();
+        result.classList.add("show");
+
+      }catch(error){
+        zipListings = [];
+        selectedListings = [];
+        countPill.textContent = "Lookup failed";
+        note.textContent = error?.message || "Unable to load listings.";
+        renderZipListings();
+        refreshSelection();
+        result.classList.add("show");
+      }finally{
+        button.disabled = false;
+        button.textContent = "Find Active Listings";
+      }
+    }
+
+    function statusPill(status){
+      const value = String(status || "").toLowerCase();
+
+      if (value === "complete" || value === "success"){
+        return '<span class="pill pill-good">Complete</span>';
+      }
+
+      if (value === "partial"){
+        return '<span class="pill pill-warn">Partial</span>';
+      }
+
+      if (value === "failed" || value === "error"){
+        return '<span class="pill pill-bad">Failed</span>';
+      }
+
+      return `<span class="pill">${escapeHtml(status || "Pending")}</span>`;
+    }
+
+    function valueOrDash(value){
+      if (value === null || value === undefined || value === ""){
+        return "—";
+      }
+      return escapeHtml(value);
+    }
+
+    function renderBatchResults(results){
+      const tbody = document.getElementById("resultRows");
+
+      if (!Array.isArray(results) || !results.length){
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" style="text-align:center;color:var(--muted);padding:28px;">
+              No property results returned.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      tbody.innerHTML = results.map(item => `
+        <tr>
+          <td><strong>${valueOrDash(item.mlsNumber)}</strong></td>
+          <td>${valueOrDash(item.address)}</td>
+          <td>${valueOrDash(item.permits)}</td>
+          <td>${valueOrDash(item.additions)}</td>
+          <td>${valueOrDash(item.sqft)}</td>
+          <td>${valueOrDash(item.zoning)}</td>
+          <td>${valueOrDash(item.riskTransit)}</td>
+          <td>${statusPill(item.status)}</td>
+        </tr>
+      `).join("");
+    }
+
+    async function startBatch(){
+      if (!selectedListings.length){
+        alert("Select at least one active ARMLS listing first.");
+        return;
+      }
+
+      stopRequested = false;
+
+      const startButton = document.getElementById("startBatchBtn");
+      const stopButton = document.getElementById("stopBatchBtn");
+      const progressWrap = document.getElementById("progressWrap");
+
+      startButton.disabled = true;
+      stopButton.disabled = false;
+      progressWrap.classList.add("show");
+
+      setMetric("metricComplete", 0);
+      setMetric("metricPartial", 0);
+      setMetric("metricFailed", 0);
+
+      document.getElementById("progressFill").style.width = "0%";
+      document.getElementById("progressText").textContent =
+        `0 of ${selectedListings.length} processed`;
+
+      /*
+        The page is intentionally prepared for a dedicated server-side batch endpoint.
+        That endpoint will run the same intelligence collectors used by BlueVera,
+        save last-known-good data, and return one result row per property.
+      */
+
+      try{
+        const response = await fetch("/api/property-intelligence-batch-run", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          cache:"no-store",
+          body:JSON.stringify({
+            listings:selectedListings.map(item => ({
+              mlsNumber:item.mlsNumber,
+              address:item.address,
+              status:item.status
+            })),
+            batchSize:Number(document.getElementById("batchSize").value || 10),
+            pauseMs:Number(document.getElementById("pauseMs").value || 1500),
+            retryFailedSources:document.getElementById("retryFailed").value === "yes"
+          })
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok){
+          throw new Error(
+            data?.error ||
+            "The property intelligence batch endpoint is not connected yet."
+          );
+        }
+
+        const results = Array.isArray(data?.results) ? data.results : [];
+        renderBatchResults(results);
+
+        const complete = results.filter(item => item.status === "complete" || item.status === "success").length;
+        const partial = results.filter(item => item.status === "partial").length;
+        const failed = results.filter(item => item.status === "failed" || item.status === "error").length;
+
+        setMetric("metricComplete", complete);
+        setMetric("metricPartial", partial);
+        setMetric("metricFailed", failed);
+
+        document.getElementById("progressFill").style.width = "100%";
+        document.getElementById("progressText").textContent =
+          `${results.length} of ${selectedListings.length} processed`;
+
+      }catch(error){
+        renderBatchResults([{
+          mlsNumber:"—",
+          address:error?.message || "Batch endpoint unavailable.",
+          permits:"—",
+          additions:"—",
+          sqft:"—",
+          zoning:"—",
+          riskTransit:"—",
+          status:"failed"
+        }]);
+
+        setMetric("metricFailed", selectedListings.length);
+
+        document.getElementById("progressText").textContent =
+          error?.message ||
+          "Unable to start the intelligence batch.";
+      }finally{
+        startButton.disabled = selectedListings.length === 0;
+        stopButton.disabled = true;
+      }
+    }
+
+    document.getElementById("zipLookupBtn")
+      .addEventListener("click", findListingsByZip);
+
+    document.getElementById("select25Btn")
+      .addEventListener("click", () => selectListings(25));
+
+    document.getElementById("select50Btn")
+      .addEventListener("click", () => selectListings(50));
+
+    document.getElementById("selectAllBtn")
+      .addEventListener("click", () => selectListings("all"));
+
+    document.getElementById("clearSelectionBtn")
+      .addEventListener("click", () => {
+        zipListings.forEach(item => item._selected = false);
+        renderZipListings();
+        refreshSelection();
+      });
+
+    document.getElementById("startBatchBtn")
+      .addEventListener("click", startBatch);
+
+    document.getElementById("stopBatchBtn")
+      .addEventListener("click", () => {
+        stopRequested = true;
+        document.getElementById("progressTitle").textContent =
+          "Stop requested — the server should stop after the current property.";
+      });
+
+    document.getElementById("logoutBtn")
+      .addEventListener("click", async function(){
+        try{
+          if (window.supabaseClient && window.supabaseClient.auth){
+            await window.supabaseClient.auth.signOut();
+          }
+
+          localStorage.removeItem("bluevera_admin_logged_in");
+          sessionStorage.removeItem("bluevera_admin_logged_in");
+          window.location.href = "index.html";
+        }catch(error){
+          console.error("Logout failed:", error);
+          alert("Unable to log out. Please try again.");
+        }
+      });
+  </script>
+</body>
+</html>
