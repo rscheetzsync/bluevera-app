@@ -1,17 +1,28 @@
 /*
   BlueVera Property Intelligence Batch Runner
-  File: /api/property-intelligence-batch-run.js
+  File:
+  bluevera.app/api/property-intelligence-batch-run.js
 
-  Receives controlled ARMLS listings from bluevera.app, gathers public
-  property signals, and saves successful last-known-good values through:
-    https://bluevera.org/api/property-intelligence-save
+  PURPOSE
+  -------
+  1. Receive selected active ARMLS listings.
+  2. Resolve the exact property/location.
+  3. Gather the same major public intelligence used by map.html.
+  4. Save successful values through:
+       https://bluevera.org/api/property-intelligence-save
 
-  This endpoint does NOT create claimed-property records.
+  IMPORTANT
+  ---------
+  - Does NOT create claimed-property records.
+  - Failed sources do NOT overwrite last-known-good intelligence.
+  - Maximum 25 listings per request.
+  - Server-to-server save uses BLUEVERA_BATCH_API_KEY.
 */
 
-const PUBLIC_BASE =
-  String(process.env.BLUEVERA_PUBLIC_BASE_URL || "https://bluevera.org")
-    .replace(/\/+$/, "");
+const PUBLIC_BASE = String(
+  process.env.BLUEVERA_PUBLIC_BASE_URL ||
+  "https://bluevera.org"
+).replace(/\/+$/, "");
 
 const BATCH_API_KEY = String(
   process.env.BLUEVERA_BATCH_API_KEY || ""
@@ -21,6 +32,10 @@ const MAX_BATCH = 25;
 const PROPERTY_CONCURRENCY = 3;
 const DEFAULT_TIMEOUT_MS = 15000;
 
+/*
+  Public source endpoints.
+*/
+
 const SUPERFUND_QUERY =
   "https://services.arcgis.com/SzoH1oFM2apCSkx3/arcgis/rest/services/Superfund/FeatureServer/1/query";
 
@@ -29,6 +44,10 @@ const ADEQ_PLUME_QUERY =
 
 const PHX_ZONING_QUERY =
   "https://maps.phoenix.gov/pub/rest/services/Public/Zoning/MapServer/0/query";
+
+/*
+  Airport reference points.
+*/
 
 const AIRPORTS = [
   {
@@ -73,6 +92,10 @@ const AIRPORTS = [
   }
 ];
 
+/* =========================================================
+   BASIC HELPERS
+   ========================================================= */
+
 function clean(value) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -100,9 +123,9 @@ function finiteNumber(value) {
 function integerValue(value) {
   const n = finiteNumber(value);
 
-  return n !== null
-    ? Math.round(n)
-    : null;
+  return n === null
+    ? null
+    : Math.round(n);
 }
 
 function sleep(ms) {
@@ -133,11 +156,23 @@ function normalizeListing(raw) {
   };
 }
 
+function detectZip(address) {
+  const match = clean(address).match(
+    /\b(\d{5})(?:-\d{4})?\b/
+  );
+
+  return match
+    ? match[1]
+    : "";
+}
+
 function detectCity(
   address,
-  parcel = {}
+  parcel = {},
+  resolved = {}
 ) {
   const explicit = clean(
+    resolved?.city ||
     parcel?.jurisdiction ||
     parcel?.city ||
     parcel?.rawAttributes?.JURISDICTION ||
@@ -149,11 +184,10 @@ function detectCity(
     return explicit;
   }
 
-  const lower =
-    clean(address)
-      .toLowerCase();
+  const lower = clean(address)
+    .toLowerCase();
 
-  const names = [
+  const cities = [
     "Paradise Valley",
     "Scottsdale",
     "Phoenix",
@@ -167,27 +201,19 @@ function detectCity(
   ];
 
   return (
-    names.find(
-      name =>
+    cities.find(
+      city =>
         lower.includes(
-          name.toLowerCase()
+          city.toLowerCase()
         )
     ) ||
     ""
   );
 }
 
-function detectZip(address) {
-  const match =
-    clean(address)
-      .match(
-        /\b(\d{5})(?:-\d{4})?\b/
-      );
-
-  return match
-    ? match[1]
-    : "";
-}
+/* =========================================================
+   HTTP
+   ========================================================= */
 
 async function fetchJson(
   url,
@@ -199,7 +225,8 @@ async function fetchJson(
 
   const timer =
     setTimeout(
-      () => controller.abort(),
+      () =>
+        controller.abort(),
       timeoutMs
     );
 
@@ -213,15 +240,15 @@ async function fetchJson(
           signal:
             controller.signal,
 
+          cache:
+            "no-store",
+
           headers: {
             Accept:
               "application/json",
 
             ...(options.headers || {})
-          },
-
-          cache:
-            "no-store"
+          }
         }
       );
 
@@ -253,10 +280,49 @@ async function fetchJson(
 
     return data;
 
+  } catch (error) {
+    if (
+      error?.name ===
+      "AbortError"
+    ) {
+      throw new Error(
+        `Request timed out: ${url}`
+      );
+    }
+
+    throw error;
+
   } finally {
     clearTimeout(timer);
   }
 }
+
+async function postPublic(
+  path,
+  body
+) {
+  return fetchJson(
+    `${PUBLIC_BASE}${path}`,
+    {
+      method:
+        "POST",
+
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+
+      body:
+        JSON.stringify(
+          body
+        )
+    }
+  );
+}
+
+/* =========================================================
+   SOURCE STATUS TRACKING
+   ========================================================= */
 
 function sourceResult(
   sourceKey,
@@ -309,160 +375,610 @@ function makeSourceTracker() {
   };
 }
 
-function haversineMiles(
-  lat1,
-  lon1,
-  lat2,
-  lon2
+/* =========================================================
+   UNIT / CONDO ADDRESS HANDLING
+   ========================================================= */
+
+/*
+  ARMLS can return addresses such as:
+
+  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
+
+  where "3" represents the unit but the word UNIT is omitted.
+*/
+
+function extractExplicitUnit(
+  value
 ) {
-  const toRad =
-    degrees =>
-      degrees *
-      Math.PI /
-      180;
+  const text =
+    clean(value);
 
-  const earthMiles =
-    3958.7613;
+  const patterns = [
+    /\b(?:unit|apt|apartment|suite|ste)\s*#?\s*([A-Za-z0-9-]+)\b/i,
+    /#\s*([A-Za-z0-9-]+)\b/i
+  ];
 
-  const dLat =
-    toRad(
-      lat2 -
-      lat1
+  for (
+    const pattern
+    of patterns
+  ) {
+    const match =
+      text.match(
+        pattern
+      );
+
+    if (
+      match &&
+      match[1]
+    ) {
+      return clean(
+        match[1]
+      );
+    }
+  }
+
+  return "";
+}
+
+function extractBareArmlsUnit(
+  value
+) {
+  const text =
+    clean(value)
+      .split(",")[0]
+      .trim();
+
+  /*
+    Example:
+      2234 W MEDLOCK Drive 3
+
+    Require a street-type word before the final token
+    so normal addresses are not casually treated as units.
+  */
+
+  const match =
+    text.match(
+      /\b(?:ST|STREET|AVE|AVENUE|RD|ROAD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|BLVD|BOULEVARD|PKWY|PARKWAY|WAY|TRL|TRAIL|TER|TERRACE|CIR|CIRCLE)\s+([A-Za-z0-9-]+)$/i
     );
 
-  const dLon =
-    toRad(
-      lon2 -
-      lon1
-    );
+  return match?.[1]
+    ? clean(match[1])
+    : "";
+}
 
-  const a =
-    Math.sin(
-      dLat / 2
-    ) ** 2 +
-    Math.cos(
-      toRad(lat1)
-    ) *
-    Math.cos(
-      toRad(lat2)
-    ) *
-    Math.sin(
-      dLon / 2
-    ) ** 2;
-
+function extractUnit(
+  value
+) {
   return (
-    earthMiles *
-    2 *
-    Math.atan2(
-      Math.sqrt(a),
-      Math.sqrt(1 - a)
-    )
+    extractExplicitUnit(
+      value
+    ) ||
+    extractBareArmlsUnit(
+      value
+    ) ||
+    ""
   );
 }
 
-function nearestAirport(
-  lat,
-  lon
+/*
+  Converts:
+
+  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
+
+  to:
+
+  2234 W MEDLOCK Drive UNIT 3, Phoenix, AZ 85015
+
+  for BlueVera exact-property lookup.
+*/
+
+function buildUnitAwareLookupAddress(
+  address,
+  unit
 ) {
+  let text =
+    clean(address);
+
+  const cleanUnit =
+    clean(unit);
+
+  if (!cleanUnit) {
+    return text;
+  }
+
+  if (
+    new RegExp(
+      `\\b(?:unit|apt|apartment|suite|ste)\\s*#?\\s*${cleanUnit}\\b`,
+      "i"
+    ).test(text)
+  ) {
+    return text;
+  }
+
+  const parts =
+    text.split(",");
+
+  let street =
+    clean(
+      parts.shift()
+    );
+
+  /*
+    Remove bare final unit.
+  */
+
+  const barePattern =
+    new RegExp(
+      `\\s+${cleanUnit.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      )}$`,
+      "i"
+    );
+
+  street =
+    street.replace(
+      barePattern,
+      ""
+    );
+
+  street =
+    `${street} UNIT ${cleanUnit}`;
+
+  return [
+    street,
+    ...parts
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+/* =========================================================
+   EXACT BLUEVERA UNIT RESOLUTION
+   ========================================================= */
+
+/*
+  This mirrors map.html's unit-property behavior.
+
+  Exact condo/unit identity is attempted first through
+  /api/listing-history.
+*/
+
+async function resolveExactBlueVeraUnit(
+  address
+) {
+  const unit =
+    extractUnit(
+      address
+    );
+
+  if (!unit) {
+    return null;
+  }
+
+  const lookupAddress =
+    buildUnitAwareLookupAddress(
+      address,
+      unit
+    );
+
+  try {
+    const data =
+      await fetchJson(
+        `${PUBLIC_BASE}/api/listing-history?address=${encodeURIComponent(lookupAddress)}`,
+        {},
+        15000
+      );
+
+    const property =
+      data?.property ||
+      null;
+
+    if (
+      !property ||
+      !property.id
+    ) {
+      return null;
+    }
+
+    const lat =
+      finiteNumber(
+        property.latitude ??
+        property.lat
+      );
+
+    const lon =
+      finiteNumber(
+        property.longitude ??
+        property.lng ??
+        property.lon
+      );
+
+    return {
+      propertyId:
+        clean(
+          property.id
+        ),
+
+      address:
+        clean(
+          property.full_address ||
+          property.address ||
+          lookupAddress
+        ),
+
+      apn:
+        cleanApn(
+          property.apn
+        ),
+
+      city:
+        clean(
+          property.city
+        ),
+
+      zip:
+        clean(
+          property.zip
+        ),
+
+      lat,
+
+      lon,
+
+      unit,
+
+      exactBlueVeraMatch:
+        true
+    };
+
+  } catch (
+    error
+  ) {
+    console.warn(
+      "Exact BlueVera unit lookup failed:",
+      error?.message ||
+      error
+    );
+
+    return null;
+  }
+}
+
+/* =========================================================
+   ADDRESS GEOCODING
+   ========================================================= */
+
+/*
+  Matches the normal map.html Arizona search strategy:
+  Nominatim, Arizona bounded.
+*/
+
+async function geocodeAddress(
+  address
+) {
+  const input =
+    clean(address);
+
+  if (!input) {
+    throw new Error(
+      "Address is required for geocoding."
+    );
+  }
+
+  const q =
+    /(\baz\b|\barizona\b)/i
+      .test(input)
+
+      ? input
+
+      : `${input}, AZ`;
+
+  const AZ_VIEWBOX =
+    "-114.95,37.10,-109.00,31.00";
+
+  const params =
+    new URLSearchParams({
+      format:
+        "json",
+
+      addressdetails:
+        "1",
+
+      limit:
+        "1",
+
+      countrycodes:
+        "us",
+
+      bounded:
+        "1",
+
+      viewbox:
+        AZ_VIEWBOX,
+
+      q
+    });
+
+  const data =
+    await fetchJson(
+      `https://nominatim.openstreetmap.org/search?${params.toString()}`,
+      {
+        headers: {
+          "User-Agent":
+            "BlueVera Property Intelligence/1.0",
+
+          Referer:
+            "https://bluevera.org/"
+        }
+      },
+      15000
+    );
+
+  if (
+    !Array.isArray(data) ||
+    !data.length
+  ) {
+    throw new Error(
+      "Address geocoder returned no Arizona result."
+    );
+  }
+
+  const first =
+    data[0];
+
+  const lat =
+    finiteNumber(
+      first.lat
+    );
+
+  const lon =
+    finiteNumber(
+      first.lon
+    );
+
   if (
     !Number.isFinite(lat) ||
     !Number.isFinite(lon)
   ) {
-    return null;
+    throw new Error(
+      "Address geocoder returned invalid coordinates."
+    );
   }
 
-  let best = null;
+  return {
+    lat,
+    lon,
 
-  for (
-    const airport
-    of AIRPORTS
+    displayName:
+      clean(
+        first.display_name
+      ),
+
+    address:
+      first.address ||
+      {}
+  };
+}
+
+/* =========================================================
+   PARCEL GEOMETRY CENTER
+   ========================================================= */
+
+function centerFromGeometry(
+  geometry
+) {
+  if (!geometry) {
+    return {
+      lat:
+        null,
+
+      lon:
+        null
+    };
+  }
+
+  let points = [];
+
+  if (
+    Array.isArray(
+      geometry.rings
+    )
   ) {
-    const miles =
-      haversineMiles(
-        lat,
-        lon,
-        airport.lat,
-        airport.lon
+    points =
+      geometry.rings
+        .flat()
+        .filter(
+          point =>
+            Array.isArray(point) &&
+            point.length >= 2
+        );
+  }
+
+  if (
+    !points.length &&
+    geometry.type ===
+      "Polygon" &&
+    Array.isArray(
+      geometry.coordinates
+    )
+  ) {
+    points =
+      geometry.coordinates
+        .flat()
+        .filter(
+          point =>
+            Array.isArray(point) &&
+            point.length >= 2
+        );
+  }
+
+  if (!points.length) {
+    return {
+      lat:
+        null,
+
+      lon:
+        null
+    };
+  }
+
+  const valid =
+    points.filter(
+      point =>
+        Number.isFinite(
+          Number(point[0])
+        ) &&
+        Number.isFinite(
+          Number(point[1])
+        )
+    );
+
+  if (!valid.length) {
+    return {
+      lat:
+        null,
+
+      lon:
+        null
+    };
+  }
+
+  const lon =
+    valid.reduce(
+      (
+        total,
+        point
+      ) =>
+        total +
+        Number(
+          point[0]
+        ),
+      0
+    ) /
+    valid.length;
+
+  const lat =
+    valid.reduce(
+      (
+        total,
+        point
+      ) =>
+        total +
+        Number(
+          point[1]
+        ),
+      0
+    ) /
+    valid.length;
+
+  return {
+    lat,
+    lon
+  };
+}
+
+/* =========================================================
+   PROPERTY RESOLUTION
+   ========================================================= */
+
+/*
+  Resolve the property exactly like the public map conceptually:
+
+  1. Try exact BlueVera unit/condo resolution.
+  2. Use those coordinates when available.
+  3. Otherwise geocode address.
+  4. Call Maricopa parcel WITH lat + lon + searched address.
+  5. Require parcel API data.ok === true.
+*/
+
+async function resolveProperty(
+  listing
+) {
+  const originalAddress =
+    clean(
+      listing.address
+    );
+
+  if (!originalAddress) {
+    throw new Error(
+      "Listing address is missing."
+    );
+  }
+
+  /*
+    STEP 1
+    Exact BlueVera condo/unit match.
+  */
+
+  const exactUnit =
+    await resolveExactBlueVeraUnit(
+      originalAddress
+    );
+
+  let lat =
+    finiteNumber(
+      exactUnit?.lat
+    );
+
+  let lon =
+    finiteNumber(
+      exactUnit?.lon
+    );
+
+  /*
+    STEP 2
+    Normal geocode if exact BlueVera row did not have coordinates.
+  */
+
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon)
+  ) {
+    const geocoded =
+      await geocodeAddress(
+        originalAddress
       );
 
-    if (
-      !best ||
-      miles <
-        best.miles
-    ) {
-      best = {
-        name:
-          airport.name,
+    lat =
+      geocoded.lat;
 
-        miles:
-          Number(
-            miles.toFixed(2)
-          )
-      };
-    }
-  }
-
-  return best;
-}
-
-function airportStatusFromMiles(
-  miles
-) {
-  if (
-    !Number.isFinite(miles)
-  ) {
-    return null;
+    lon =
+      geocoded.lon;
   }
 
   if (
-    miles <= 2
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon)
   ) {
-    return `Airport: HIGH (${miles.toFixed(2)} mi)`;
+    throw new Error(
+      "Could not determine property coordinates."
+    );
   }
 
-  if (
-    miles <= 5
-  ) {
-    return `Airport: nearby (${miles.toFixed(2)} mi)`;
-  }
+  /*
+    STEP 3
+    Maricopa parcel.
 
-  return "Airport: clear";
-}
+    This is the critical change from the earlier version.
 
-function distanceStatus(
-  label,
-  miles,
-  thresholds
-) {
-  if (
-    !Number.isFinite(miles)
-  ) {
-    return null;
-  }
+    The public map sends:
+      lat
+      lon
+      address
+  */
 
-  if (
-    miles <=
-    thresholds.high
-  ) {
-    return `${label}: HIGH (${miles.toFixed(2)} mi)`;
-  }
+  const parcelUrl =
+    `${PUBLIC_BASE}/api/maricopa-parcel` +
+    `?lat=${encodeURIComponent(lat)}` +
+    `&lon=${encodeURIComponent(lon)}` +
+    `&address=${encodeURIComponent(originalAddress)}`;
 
-  if (
-    miles <=
-    thresholds.nearby
-  ) {
-    return `${label}: NEARBY (${miles.toFixed(2)} mi)`;
-  }
-
-  return `${label}: clear`;
-}
-
-async function loadParcel(
-  address
-) {
   const data =
     await fetchJson(
-      `${PUBLIC_BASE}/api/maricopa-parcel?address=${encodeURIComponent(address)}`
+      parcelUrl,
+      {},
+      18000
     );
 
   if (
@@ -471,18 +987,9 @@ async function loadParcel(
       "object"
   ) {
     throw new Error(
-      "Parcel lookup returned no property data."
+      "Parcel lookup returned no data."
     );
   }
-
-  /*
-    IMPORTANT:
-    This now matches map.html.
-
-    BlueVera only accepts the parcel
-    when the parcel API explicitly
-    confirms data.ok === true.
-  */
 
   if (
     data.ok !== true
@@ -499,29 +1006,28 @@ async function loadParcel(
     data.rawAttributes ||
     {};
 
-  const lat =
+  const geometryCenter =
+    centerFromGeometry(
+      data.geometry ||
+      data.feature?.geometry
+    );
+
+  const correctedLat =
     finiteNumber(
       data.correctedLat
-    ) ??
-    finiteNumber(
-      data.latitude
     ) ??
     finiteNumber(
       data.lat
     ) ??
     finiteNumber(
-      data.geometry?.y
+      data.latitude
     ) ??
-    finiteNumber(
-      data.geometry?.latitude
-    );
+    geometryCenter.lat ??
+    lat;
 
-  const lon =
+  const correctedLon =
     finiteNumber(
       data.correctedLon
-    ) ??
-    finiteNumber(
-      data.longitude
     ) ??
     finiteNumber(
       data.lon
@@ -530,66 +1036,89 @@ async function loadParcel(
       data.lng
     ) ??
     finiteNumber(
-      data.geometry?.x
+      data.longitude
     ) ??
-    finiteNumber(
-      data.geometry?.longitude
+    geometryCenter.lon ??
+    lon;
+
+  const apn =
+    cleanApn(
+      data.apn ||
+      exactUnit?.apn ||
+      attrs.APN_DASH ||
+      attrs.APN ||
+      attrs.PARCEL ||
+      attrs.PARCEL_NUM ||
+      attrs.PARCEL_NUMBER
+    );
+
+  const livingSqft =
+    integerValue(
+      data.livingSqft ??
+      attrs.LIVING_SPACE ??
+      attrs.LIVABLE_SQFT ??
+      attrs.LIVING_SQFT ??
+      attrs.IMPR_SQFT ??
+      attrs.BLDG_SQFT
+    );
+
+  const zoning =
+    clean(
+      data.zoning ||
+      attrs.CITY_ZONING ||
+      attrs.ZONING
+    );
+
+  const jurisdiction =
+    clean(
+      data.jurisdiction ||
+      attrs.JURISDICTION ||
+      attrs.CITY ||
+      attrs.MUNI ||
+      exactUnit?.city
+    );
+
+  const officialAddress =
+    clean(
+      data.propertyAddress ||
+      exactUnit?.address ||
+      originalAddress
     );
 
   return {
     ...data,
 
-    apn:
-      cleanApn(
-        data.apn ||
-        attrs.APN_DASH ||
-        attrs.APN ||
-        attrs.PARCEL ||
-        attrs.PARCEL_NUM ||
-        attrs.PARCEL_NUMBER
-      ),
+    propertyId:
+      exactUnit?.propertyId ||
+      null,
 
-    livingSqft:
-      integerValue(
-        data.livingSqft ??
-        attrs.LIVING_SPACE ??
-        attrs.LIVABLE_SQFT ??
-        attrs.LIVING_SQFT ??
-        attrs.IMPR_SQFT ??
-        attrs.BLDG_SQFT
-      ),
+    originalAddress,
 
-    yearBuilt:
-      integerValue(
-        data.yearBuilt ??
-        attrs.CONST_YEAR ??
-        attrs.YEAR_BUILT ??
-        attrs.YR_BUILT ??
-        attrs.BUILT_YEAR
-      ),
+    officialAddress,
 
-    zoning:
-      clean(
-        data.zoning ||
-        attrs.CITY_ZONING ||
-        attrs.ZONING
-      ),
+    apn,
 
-    jurisdiction:
-      clean(
-        data.jurisdiction ||
-        attrs.JURISDICTION ||
-        attrs.CITY ||
-        attrs.MUNI
-      ),
+    livingSqft,
+
+    zoning,
+
+    jurisdiction,
 
     latitude:
-      lat,
+      correctedLat,
 
     longitude:
-      lon
+      correctedLon,
+
+    exactUnit:
+      exactUnit ||
+      null
   };
 }
+
+/* =========================================================
+   COUNTY SKETCH / ADDITIONS
+   ========================================================= */
 
 async function loadCountySketch(
   apn
@@ -601,7 +1130,9 @@ async function loadCountySketch(
   }
 
   return fetchJson(
-    `${PUBLIC_BASE}/api/county-sketch?apn=${encodeURIComponent(apn)}`
+    `${PUBLIC_BASE}/api/county-sketch?apn=${encodeURIComponent(apn)}`,
+    {},
+    18000
   );
 }
 
@@ -658,12 +1189,40 @@ function additionsFromSketch(
   return null;
 }
 
+function additionsStatus(
+  found
+) {
+  if (
+    found === true
+  ) {
+    return (
+      "Additions & Improvements Found"
+    );
+  }
+
+  if (
+    found === false
+  ) {
+    return (
+      "Additions & Improvements: none found"
+    );
+  }
+
+  return null;
+}
+
+/* =========================================================
+   RENTCAST LISTING SQFT
+   ========================================================= */
+
 async function loadListingSqft(
   address
 ) {
   const data =
     await fetchJson(
-      `${PUBLIC_BASE}/api/rentcast-cached?address=${encodeURIComponent(address)}&mode=sale&ttlHours=120`
+      `${PUBLIC_BASE}/api/rentcast-cached?address=${encodeURIComponent(address)}&mode=sale&ttlHours=120`,
+      {},
+      18000
     );
 
   const listings =
@@ -717,15 +1276,75 @@ async function loadListingSqft(
   };
 }
 
+function sqftStatus(
+  countySqft,
+  listingSqft
+) {
+  if (
+    !Number.isFinite(
+      countySqft
+    ) ||
+    countySqft <= 0
+  ) {
+    return null;
+  }
+
+  if (
+    !Number.isFinite(
+      listingSqft
+    ) ||
+    listingSqft <= 0
+  ) {
+    return (
+      "SqFt: listing unavailable"
+    );
+  }
+
+  const percent =
+    Math.abs(
+      listingSqft -
+      countySqft
+    ) /
+    countySqft *
+    100;
+
+  return (
+    percent > 10
+
+      ? "SqFt: mismatch"
+
+      : "SqFt: match"
+  );
+}
+
+/* =========================================================
+   PERMITS
+   ========================================================= */
+
 function phoenixPermitPayload(
   address
 ) {
   const text =
     clean(address);
 
-  const m =
-    text.match(
-      /^(\d+)\s+([NSEW])?\s*(.+?)(?:,\s*Phoenix)?(?:,\s*AZ)?(?:\s+\d{5}(?:-\d{4})?)?$/i
+  const firstPart =
+    text
+      .split(",")[0]
+      .trim();
+
+  const normalized =
+    firstPart
+      .replace(/\./g, " ")
+      .replace(
+        /^(\d+[A-Z]?)\s*,\s*/,
+        "$1 "
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const match =
+    normalized.match(
+      /^(\d+[A-Z]?)\s+([NSEW])?\s*(.+)$/i
     );
 
   return {
@@ -736,40 +1355,17 @@ function phoenixPermitPayload(
       text,
 
     houseNumber:
-      m?.[1] ||
+      match?.[1] ||
       "",
 
     direction:
-      m?.[2] ||
+      match?.[2] ||
       "",
 
     street:
-      m?.[3] ||
-      ""
+      match?.[3] ||
+      normalized
   };
-}
-
-async function postPublic(
-  path,
-  body
-) {
-  return fetchJson(
-    `${PUBLIC_BASE}${path}`,
-    {
-      method:
-        "POST",
-
-      headers: {
-        "Content-Type":
-          "application/json"
-      },
-
-      body:
-        JSON.stringify(
-          body
-        )
-    }
-  );
 }
 
 function extractPermitArray(
@@ -811,31 +1407,66 @@ function extractPermitCount(
     const value
     of direct
   ) {
-    const n =
-      finiteNumber(value);
+    const number =
+      finiteNumber(
+        value
+      );
 
     if (
-      n !== null &&
-      n >= 0
+      number !== null &&
+      number >= 0
     ) {
-      return Math.round(n);
+      return Math.round(
+        number
+      );
     }
   }
 
-  return (
+  const array =
     extractPermitArray(
       data
-    ).length
-  );
+    );
+
+  if (
+    Array.isArray(array)
+  ) {
+    return array.length;
+  }
+
+  return null;
+}
+
+function permitStatus(
+  count
+) {
+  if (
+    !Number.isInteger(
+      count
+    )
+  ) {
+    return null;
+  }
+
+  return `Permits: ${count} found`;
 }
 
 async function loadPermits(
   city,
-  address
+  address,
+  apn
 ) {
   const lower =
     clean(city)
       .toLowerCase();
+
+  const payload = {
+    address,
+    fullAddress:
+      address,
+    apn:
+      apn ||
+      null
+  };
 
   if (
     lower.includes(
@@ -845,9 +1476,12 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/phx-permits",
-        phoenixPermitPayload(
-          address
-        )
+        {
+          ...payload,
+          ...phoenixPermitPayload(
+            address
+          )
+        }
       )
     );
   }
@@ -860,11 +1494,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/paradise-valley-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -877,11 +1507,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/scottsdale-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -894,11 +1520,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/tempe-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -911,11 +1533,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/gilbert-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -928,11 +1546,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/chandler-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -945,11 +1559,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/peoria-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -962,11 +1572,7 @@ async function loadPermits(
     return extractPermitCount(
       await postPublic(
         "/api/glendale-permits",
-        {
-          address,
-          fullAddress:
-            address
-        }
+        payload
       )
     );
   }
@@ -991,37 +1597,31 @@ async function loadPermits(
       "mesa"
     )
   ) {
-    const [
-      openData,
-      legacy
-    ] =
+    const results =
       await Promise.allSettled(
         [
           postPublic(
             "/api/mesa-permits",
-            {
-              address,
-              fullAddress:
-                address
-            }
+            payload
           ),
 
           postPublic(
             "/api/mesa-legacy-permits",
-            {
-              address,
-              fullAddress:
-                address
-            }
+            payload
           )
         ]
       );
 
+    const success =
+      results
+        .filter(
+          result =>
+            result.status ===
+            "fulfilled"
+        );
+
     if (
-      openData.status ===
-        "rejected" &&
-      legacy.status ===
-        "rejected"
+      !success.length
     ) {
       throw new Error(
         "Both Mesa permit sources failed."
@@ -1031,22 +1631,13 @@ async function loadPermits(
     const seen =
       new Set();
 
-    let count = 0;
+    let directCount =
+      0;
 
     for (
       const result
-      of [
-        openData,
-        legacy
-      ]
+      of success
     ) {
-      if (
-        result.status !==
-        "fulfilled"
-      ) {
-        continue;
-      }
-
       const rows =
         extractPermitArray(
           result.value
@@ -1072,24 +1663,40 @@ async function loadPermits(
             !seen.has(key)
           ) {
             seen.add(key);
-            count += 1;
           }
         }
+
       } else {
-        count +=
+        const count =
           extractPermitCount(
             result.value
           );
+
+        if (
+          Number.isInteger(
+            count
+          )
+        ) {
+          directCount +=
+            count;
+        }
       }
     }
 
-    return count;
+    return (
+      seen.size +
+      directCount
+    );
   }
 
   throw new Error(
     `Permit source not configured for ${city || "this city"}.`
   );
 }
+
+/* =========================================================
+   ARCGIS HELPERS
+   ========================================================= */
 
 async function arcgisPointQuery(
   queryUrl,
@@ -1165,350 +1772,9 @@ async function arcgisPointQuery(
     : [];
 }
 
-async function loadEnvironmental(
-  lat,
-  lon
-) {
-  const result = {
-    superfund:
-      null,
-
-    adeq:
-      null
-  };
-
-  const [
-    superfund,
-    adeq
-  ] =
-    await Promise.allSettled(
-      [
-        (async () => {
-          const inside =
-            await arcgisPointQuery(
-              SUPERFUND_QUERY,
-              lat,
-              lon,
-              {
-                outFields:
-                  "CITY,COUNTY,NAME,TYPE,URL"
-              }
-            );
-
-          if (
-            inside.length
-          ) {
-            return {
-              status:
-                "Superfund: inside mapped area",
-
-              miles:
-                0,
-
-              name:
-                clean(
-                  inside[0]
-                    ?.attributes
-                    ?.NAME
-                )
-            };
-          }
-
-          const nearby =
-            await arcgisPointQuery(
-              SUPERFUND_QUERY,
-              lat,
-              lon,
-              {
-                distanceMeters:
-                  804.672,
-
-                outFields:
-                  "CITY,COUNTY,NAME,TYPE,URL"
-              }
-            );
-
-          if (
-            nearby.length
-          ) {
-            return {
-              status:
-                "Superfund: within 0.5 mi",
-
-              miles:
-                0.5,
-
-              name:
-                clean(
-                  nearby[0]
-                    ?.attributes
-                    ?.NAME
-                )
-            };
-          }
-
-          return {
-            status:
-              "Superfund: clear (≤0.5 mi)",
-
-            miles:
-              null,
-
-            name:
-              null
-          };
-        })(),
-
-        (async () => {
-          const inside =
-            await arcgisPointQuery(
-              ADEQ_PLUME_QUERY,
-              lat,
-              lon,
-              {
-                outFields:
-                  "*"
-              }
-            );
-
-          if (
-            inside.length
-          ) {
-            const a =
-              inside[0]
-                ?.attributes ||
-              {};
-
-            return {
-              status:
-                "ADEQ: inside mapped area",
-
-              miles:
-                0,
-
-              name:
-                clean(
-                  a.NAME ||
-                  a.SITE_NAME ||
-                  a.SITENAME ||
-                  a.PROJECT
-                ) ||
-                null
-            };
-          }
-
-          const nearby =
-            await arcgisPointQuery(
-              ADEQ_PLUME_QUERY,
-              lat,
-              lon,
-              {
-                distanceMeters:
-                  804.672,
-
-                outFields:
-                  "*"
-              }
-            );
-
-          if (
-            nearby.length
-          ) {
-            const a =
-              nearby[0]
-                ?.attributes ||
-              {};
-
-            return {
-              status:
-                "ADEQ: within 0.5 mi",
-
-              miles:
-                0.5,
-
-              name:
-                clean(
-                  a.NAME ||
-                  a.SITE_NAME ||
-                  a.SITENAME ||
-                  a.PROJECT
-                ) ||
-                null
-            };
-          }
-
-          return {
-            status:
-              "ADEQ: clear",
-
-            miles:
-              null,
-
-            name:
-              null
-          };
-        })()
-      ]
-    );
-
-  if (
-    superfund.status ===
-    "fulfilled"
-  ) {
-    result.superfund =
-      superfund.value;
-
-  } else {
-    result.superfundError =
-      superfund.reason
-        ?.message ||
-      "Superfund lookup failed.";
-  }
-
-  if (
-    adeq.status ===
-    "fulfilled"
-  ) {
-    result.adeq =
-      adeq.value;
-
-  } else {
-    result.adeqError =
-      adeq.reason
-        ?.message ||
-      "ADEQ lookup failed.";
-  }
-
-  return result;
-}
-
-async function loadFlood(
-  lat,
-  lon
-) {
-  const data =
-    await fetchJson(
-      `${PUBLIC_BASE}/api/maricopa-floodplain?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lon)}`
-    );
-
-  const floodplain =
-    data?.floodplain ||
-    data?.floodPlain ||
-    {};
-
-  const floodway =
-    data?.floodway ||
-    data?.floodWay ||
-    {};
-
-  function boolFrom(
-    values
-  ) {
-    for (
-      const v
-      of values
-    ) {
-      if (
-        v === true
-      ) {
-        return true;
-      }
-
-      if (
-        v === false
-      ) {
-        return false;
-      }
-
-      const text =
-        clean(v)
-          .toLowerCase();
-
-      if (
-        text === "true" ||
-        text === "yes" ||
-        text === "inside" ||
-        text === "in"
-      ) {
-        return true;
-      }
-
-      if (
-        text === "false" ||
-        text === "no" ||
-        text === "outside" ||
-        text === "out"
-      ) {
-        return false;
-      }
-    }
-
-    return null;
-  }
-
-  const inFloodplain =
-    boolFrom(
-      [
-        data?.inFloodplain,
-        data?.insideFloodplain,
-        floodplain?.inside,
-        floodplain?.inFloodplain
-      ]
-    );
-
-  const inFloodway =
-    boolFrom(
-      [
-        data?.inFloodway,
-        data?.insideFloodway,
-        floodway?.inside,
-        floodway?.inFloodway
-      ]
-    );
-
-  const floodZone =
-    clean(
-      data?.floodZone ||
-      data?.zone ||
-      floodplain?.zone ||
-      floodplain?.floodZone
-    ) ||
-    null;
-
-  return {
-    floodplainStatus:
-      inFloodplain === true
-
-        ? "Floodplain: INSIDE MAPPED AREA"
-
-        : inFloodplain === false
-
-          ? "Floodplain: OUTSIDE MAPPED AREA"
-
-          : clean(
-              data?.floodplainStatus ||
-              floodplain?.status
-            ) ||
-            null,
-
-    floodwayStatus:
-      inFloodway === true
-
-        ? "Floodway: INSIDE MAPPED AREA"
-
-        : inFloodway === false
-
-          ? "Floodway: OUTSIDE MAPPED AREA"
-
-          : clean(
-              data?.floodwayStatus ||
-              floodway?.status
-            ) ||
-            null,
-
-    floodZone
-  };
-}
+/* =========================================================
+   ZONING
+   ========================================================= */
 
 async function loadZoning(
   city,
@@ -1517,7 +1783,9 @@ async function loadZoning(
   parcel
 ) {
   if (
-    parcel?.zoning
+    clean(
+      parcel?.zoning
+    )
   ) {
     return {
       code:
@@ -1532,8 +1800,10 @@ async function loadZoning(
         "County / Assessor parcel",
 
       jurisdiction:
-        city ||
-        parcel.jurisdiction ||
+        clean(
+          city ||
+          parcel.jurisdiction
+        ) ||
         null
     };
   }
@@ -1692,10 +1962,14 @@ async function loadZoning(
         `${PUBLIC_BASE}/api/goodyear-zoning?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lon)}`
       );
 
+    const zoning =
+      data?.zoning ||
+      data;
+
     const code =
       clean(
-        data?.zoning?.code ||
-        data?.zoning ||
+        zoning?.code ||
+        zoning?.zoning ||
         data?.code
       );
 
@@ -1710,7 +1984,7 @@ async function loadZoning(
 
       description:
         clean(
-          data?.zoning?.description ||
+          zoning?.description ||
           data?.description
         ) ||
         null,
@@ -1728,10 +2002,442 @@ async function loadZoning(
   );
 }
 
+/* =========================================================
+   SUPERFUND / ADEQ
+   ========================================================= */
+
+async function loadEnvironmental(
+  lat,
+  lon
+) {
+  const output = {
+    superfund:
+      null,
+
+    adeq:
+      null
+  };
+
+  const results =
+    await Promise.allSettled(
+      [
+        (async () => {
+          const inside =
+            await arcgisPointQuery(
+              SUPERFUND_QUERY,
+              lat,
+              lon,
+              {
+                outFields:
+                  "CITY,COUNTY,NAME,TYPE,URL"
+              }
+            );
+
+          if (
+            inside.length
+          ) {
+            return {
+              status:
+                "Superfund: inside mapped area",
+
+              miles:
+                0,
+
+              name:
+                clean(
+                  inside[0]
+                    ?.attributes
+                    ?.NAME
+                ) ||
+                null
+            };
+          }
+
+          const nearby =
+            await arcgisPointQuery(
+              SUPERFUND_QUERY,
+              lat,
+              lon,
+              {
+                distanceMeters:
+                  804.672,
+
+                outFields:
+                  "CITY,COUNTY,NAME,TYPE,URL"
+              }
+            );
+
+          if (
+            nearby.length
+          ) {
+            return {
+              status:
+                "Superfund: within 0.5 mi",
+
+              miles:
+                0.5,
+
+              name:
+                clean(
+                  nearby[0]
+                    ?.attributes
+                    ?.NAME
+                ) ||
+                null
+            };
+          }
+
+          return {
+            status:
+              "Superfund: clear (≤0.5 mi)",
+
+            miles:
+              null,
+
+            name:
+              null
+          };
+        })(),
+
+        (async () => {
+          const inside =
+            await arcgisPointQuery(
+              ADEQ_PLUME_QUERY,
+              lat,
+              lon,
+              {
+                outFields:
+                  "*"
+              }
+            );
+
+          if (
+            inside.length
+          ) {
+            const attrs =
+              inside[0]
+                ?.attributes ||
+              {};
+
+            return {
+              status:
+                "ADEQ: inside mapped area",
+
+              miles:
+                0,
+
+              name:
+                clean(
+                  attrs.NAME ||
+                  attrs.SITE_NAME ||
+                  attrs.SITENAME ||
+                  attrs.PROJECT
+                ) ||
+                null
+            };
+          }
+
+          const nearby =
+            await arcgisPointQuery(
+              ADEQ_PLUME_QUERY,
+              lat,
+              lon,
+              {
+                distanceMeters:
+                  804.672,
+
+                outFields:
+                  "*"
+              }
+            );
+
+          if (
+            nearby.length
+          ) {
+            const attrs =
+              nearby[0]
+                ?.attributes ||
+              {};
+
+            return {
+              status:
+                "ADEQ: within 0.5 mi",
+
+              miles:
+                0.5,
+
+              name:
+                clean(
+                  attrs.NAME ||
+                  attrs.SITE_NAME ||
+                  attrs.SITENAME ||
+                  attrs.PROJECT
+                ) ||
+                null
+            };
+          }
+
+          return {
+            status:
+              "ADEQ: clear",
+
+            miles:
+              null,
+
+            name:
+              null
+          };
+        })()
+      ]
+    );
+
+  const [
+    superfund,
+    adeq
+  ] = results;
+
+  if (
+    superfund.status ===
+    "fulfilled"
+  ) {
+    output.superfund =
+      superfund.value;
+  } else {
+    output.superfundError =
+      superfund.reason
+        ?.message ||
+      "Superfund lookup failed.";
+  }
+
+  if (
+    adeq.status ===
+    "fulfilled"
+  ) {
+    output.adeq =
+      adeq.value;
+  } else {
+    output.adeqError =
+      adeq.reason
+        ?.message ||
+      "ADEQ lookup failed.";
+  }
+
+  return output;
+}
+
+/* =========================================================
+   FLOODPLAIN / FLOODWAY
+   ========================================================= */
+
+async function loadFlood(
+  lat,
+  lon
+) {
+  const data =
+    await fetchJson(
+      `${PUBLIC_BASE}/api/maricopa-floodplain?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lon)}`,
+      {},
+      18000
+    );
+
+  if (
+    data?.success ===
+    false
+  ) {
+    throw new Error(
+      clean(
+        data.error
+      ) ||
+      "Flood lookup failed."
+    );
+  }
+
+  const floodZone =
+    clean(
+      data?.floodZone ||
+      data?.zone
+    ) ||
+    null;
+
+  const inFloodplain =
+    data?.inFloodplain;
+
+  const inFloodway =
+    data?.inFloodway;
+
+  return {
+    floodplainStatus:
+      inFloodplain === true
+
+        ? "Floodplain: INSIDE MAPPED AREA"
+
+        : inFloodplain === false
+
+          ? "Floodplain: OUTSIDE MAPPED AREA"
+
+          : null,
+
+    floodwayStatus:
+      inFloodway === true
+
+        ? "Floodway: INSIDE MAPPED AREA"
+
+        : inFloodway === false
+
+          ? "Floodway: OUTSIDE MAPPED AREA"
+
+          : null,
+
+    floodZone
+  };
+}
+
+/* =========================================================
+   DISTANCES
+   ========================================================= */
+
+function haversineMiles(
+  lat1,
+  lon1,
+  lat2,
+  lon2
+) {
+  const toRad =
+    degrees =>
+      degrees *
+      Math.PI /
+      180;
+
+  const earthMiles =
+    3958.7613;
+
+  const dLat =
+    toRad(
+      lat2 -
+      lat1
+    );
+
+  const dLon =
+    toRad(
+      lon2 -
+      lon1
+    );
+
+  const a =
+    Math.sin(
+      dLat / 2
+    ) ** 2 +
+    Math.cos(
+      toRad(lat1)
+    ) *
+    Math.cos(
+      toRad(lat2)
+    ) *
+    Math.sin(
+      dLon / 2
+    ) ** 2;
+
+  return (
+    earthMiles *
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+  );
+}
+
+/* =========================================================
+   AIRPORT
+   ========================================================= */
+
+function nearestAirport(
+  lat,
+  lon
+) {
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lon)
+  ) {
+    return null;
+  }
+
+  let best =
+    null;
+
+  for (
+    const airport
+    of AIRPORTS
+  ) {
+    const miles =
+      haversineMiles(
+        lat,
+        lon,
+        airport.lat,
+        airport.lon
+      );
+
+    if (
+      !best ||
+      miles <
+        best.miles
+    ) {
+      best = {
+        name:
+          airport.name,
+
+        miles:
+          Number(
+            miles.toFixed(2)
+          )
+      };
+    }
+  }
+
+  return best;
+}
+
+function airportStatusFromMiles(
+  miles
+) {
+  if (
+    !Number.isFinite(
+      miles
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    miles <= 2
+  ) {
+    return (
+      `Airport: HIGH (${miles.toFixed(2)} mi)`
+    );
+  }
+
+  if (
+    miles <= 5
+  ) {
+    return (
+      `Airport: nearby (${miles.toFixed(2)} mi)`
+    );
+  }
+
+  return (
+    "Airport: clear"
+  );
+}
+
+/* =========================================================
+   RAIL / TRANSIT
+   ========================================================= */
+
 function overpassElementsPoint(
   elements
 ) {
-  const points = [];
+  const points =
+    [];
 
   for (
     const element
@@ -1780,7 +2486,8 @@ async function overpassNearest(
   const radiusM =
     12875;
 
-  let selectors = "";
+  let selectors =
+    "";
 
   if (
     kind ===
@@ -1817,7 +2524,6 @@ async function overpassNearest(
     setTimeout(
       () =>
         controller.abort(),
-
       14000
     );
 
@@ -1869,7 +2575,8 @@ async function overpassNearest(
         data.elements
       );
 
-    let best = null;
+    let best =
+      null;
 
     for (
       const point
@@ -1935,97 +2642,64 @@ async function overpassNearest(
             null
         };
 
+  } catch (
+    error
+  ) {
+    if (
+      error?.name ===
+      "AbortError"
+    ) {
+      throw new Error(
+        `Overpass ${kind} timed out.`
+      );
+    }
+
+    throw error;
+
   } finally {
     clearTimeout(timer);
   }
 }
 
-function sqftStatus(
-  countySqft,
-  listingSqft
+function distanceStatus(
+  label,
+  miles,
+  thresholds
 ) {
   if (
     !Number.isFinite(
-      countySqft
-    ) ||
-    countySqft <= 0
+      miles
+    )
   ) {
     return null;
   }
 
   if (
-    !Number.isFinite(
-      listingSqft
-    ) ||
-    listingSqft <= 0
+    miles <=
+    thresholds.high
   ) {
     return (
-      "SqFt: listing unavailable"
-    );
-  }
-
-  const pct =
-    Math.abs(
-      listingSqft -
-      countySqft
-    ) /
-    countySqft *
-    100;
-
-  return (
-    pct > 10
-
-      ? "SqFt: mismatch"
-
-      : "SqFt: match"
-  );
-}
-
-function additionsStatus(
-  found
-) {
-  if (
-    found === true
-  ) {
-    return (
-      "Additions & Improvements Found"
+      `${label}: HIGH (${miles.toFixed(2)} mi)`
     );
   }
 
   if (
-    found === false
+    miles <=
+    thresholds.nearby
   ) {
     return (
-      "Additions & Improvements: none found"
+      `${label}: NEARBY (${miles.toFixed(2)} mi)`
     );
   }
 
-  return null;
-}
-
-function permitStatus(
-  count
-) {
   return (
-    Number.isInteger(
-      count
-    )
-
-      ? `Permits: ${count} found`
-
-      : null
+    `${label}: clear`
   );
 }
 
-/*
-  Save into bluevera.org using the
-  secure server-to-server key.
-
-  The key never goes to the browser.
-  It exists only in the server
-  environment on bluevera.app and
-  bluevera.org.
-*/
+/* =========================================================
+   SECURE SAVE
+   ========================================================= */
 
 async function saveIntelligence(
   payload
@@ -2057,10 +2731,13 @@ async function saveIntelligence(
           payload
         )
     },
-
     20000
   );
 }
+
+/* =========================================================
+   PROCESS ONE PROPERTY
+   ========================================================= */
 
 async function processListing(
   listing
@@ -2119,19 +2796,25 @@ async function processListing(
     return result;
   }
 
+  /* ---------------------------------------------------------
+     PROPERTY / PARCEL
+     --------------------------------------------------------- */
+
   let parcel;
 
   try {
     parcel =
-      await loadParcel(
-        listing.address
+      await resolveProperty(
+        listing
       );
 
     tracker.success(
       "county_assessor"
     );
 
-  } catch (error) {
+  } catch (
+    error
+  ) {
     tracker.fail(
       "county_assessor",
       error?.message
@@ -2141,7 +2824,10 @@ async function processListing(
       "failed";
 
     result.error =
-      "Unable to resolve county parcel/APN.";
+      `Unable to resolve county parcel/APN: ${
+        error?.message ||
+        "Unknown parcel error"
+      }`;
 
     result.durationMs =
       Date.now() -
@@ -2158,10 +2844,14 @@ async function processListing(
   const city =
     detectCity(
       listing.address,
-      parcel
+      parcel,
+      parcel.exactUnit
     );
 
   const zip =
+    clean(
+      parcel.exactUnit?.zip
+    ) ||
     detectZip(
       listing.address
     );
@@ -2176,13 +2866,26 @@ async function processListing(
       parcel.longitude
     );
 
+  const propertyAddress =
+    clean(
+      parcel.officialAddress ||
+      listing.address
+    );
+
   const property = {
+    propertyId:
+      parcel.propertyId ||
+      null,
+
     mlsNumber:
       listing.mlsNumber ||
       null,
 
     address:
-      listing.address,
+      propertyAddress,
+
+    fullAddress:
+      propertyAddress,
 
     city:
       city ||
@@ -2209,10 +2912,11 @@ async function processListing(
       lon
   };
 
-  const intelligence = {};
+  const intelligence =
+    {};
 
   /*
-    County / Assessor square footage
+    County SqFt.
   */
 
   if (
@@ -2230,10 +2934,9 @@ async function processListing(
       "Maricopa County Assessor";
   }
 
-  /*
-    Run the independent sources
-    after parcel identity is known.
-  */
+  /* ---------------------------------------------------------
+     SOURCE JOBS
+     --------------------------------------------------------- */
 
   const jobs = {
     sketch:
@@ -2257,7 +2960,8 @@ async function processListing(
     permits:
       loadPermits(
         city,
-        listing.address
+        propertyAddress,
+        apn
       ),
 
     zoning:
@@ -2353,7 +3057,8 @@ async function processListing(
       )
     );
 
-  const values = {};
+  const values =
+    {};
 
   names.forEach(
     (
@@ -2365,9 +3070,9 @@ async function processListing(
     }
   );
 
-  /*
-    ADDITIONS & IMPROVEMENTS
-  */
+  /* ---------------------------------------------------------
+     ADDITIONS
+     --------------------------------------------------------- */
 
   if (
     values.sketch.status ===
@@ -2433,9 +3138,9 @@ async function processListing(
     );
   }
 
-  /*
-    LISTING SQUARE FOOTAGE
-  */
+  /* ---------------------------------------------------------
+     LISTING SQFT
+     --------------------------------------------------------- */
 
   if (
     values.listingSqft.status ===
@@ -2456,7 +3161,7 @@ async function processListing(
         listingSqft;
 
       intelligence.listingSqftSource =
-        "RentCast active listing";
+        "RentCast";
 
       tracker.success(
         "rentcast_listing_sqft"
@@ -2468,12 +3173,6 @@ async function processListing(
         ?.foundListing ===
       false
     ) {
-      /*
-        This is a successful lookup
-        that simply found no listing sqft.
-        We do NOT overwrite old good sqft.
-      */
-
       tracker.success(
         "rentcast_listing_sqft"
       );
@@ -2484,7 +3183,7 @@ async function processListing(
         intelligence.countySqft
       );
 
-    const listing =
+    const listingValue =
       finiteNumber(
         intelligence.listingSqft
       );
@@ -2492,7 +3191,7 @@ async function processListing(
     intelligence.sqftStatus =
       sqftStatus(
         countySqft,
-        listing
+        listingValue
       );
 
     if (
@@ -2501,13 +3200,13 @@ async function processListing(
       ) &&
       countySqft > 0 &&
       Number.isFinite(
-        listing
+        listingValue
       ) &&
-      listing > 0
+      listingValue > 0
     ) {
       intelligence.sqftDifference =
         Math.round(
-          listing -
+          listingValue -
           countySqft
         );
 
@@ -2516,7 +3215,7 @@ async function processListing(
           (
             (
               (
-                listing -
+                listingValue -
                 countySqft
               ) /
               countySqft
@@ -2526,20 +3225,15 @@ async function processListing(
         );
 
       result.sqft =
-        intelligence.sqftStatus
-          ?.replace(
-            /^SqFt:\s*/i,
-            ""
-          ) ||
-        `${countySqft}/${listing}`;
+        `${countySqft} / ${listingValue}`;
 
-    } else {
-      result.sqft =
+    } else if (
+      Number.isFinite(
         countySqft
-
-          ? `County ${countySqft}`
-
-          : "—";
+      )
+    ) {
+      result.sqft =
+        `County ${countySqft}`;
     }
 
   } else {
@@ -2550,17 +3244,17 @@ async function processListing(
         ?.message
     );
 
-    result.sqft =
+    if (
       intelligence.countySqft
-
-        ? `County ${intelligence.countySqft}`
-
-        : "—";
+    ) {
+      result.sqft =
+        `County ${intelligence.countySqft}`;
+    }
   }
 
-  /*
-    PERMITS
-  */
+  /* ---------------------------------------------------------
+     PERMITS
+     --------------------------------------------------------- */
 
   if (
     values.permits.status ===
@@ -2593,7 +3287,7 @@ async function processListing(
     } else {
       tracker.fail(
         "permits",
-        "Permit source returned no count."
+        "Permit source returned no valid count."
       );
     }
 
@@ -2606,9 +3300,9 @@ async function processListing(
     );
   }
 
-  /*
-    ZONING
-  */
+  /* ---------------------------------------------------------
+     ZONING
+     --------------------------------------------------------- */
 
   if (
     values.zoning.status ===
@@ -2656,7 +3350,7 @@ async function processListing(
     } else {
       tracker.fail(
         "zoning",
-        "Zoning source returned no code."
+        "Zoning source returned no zoning code."
       );
     }
 
@@ -2669,9 +3363,9 @@ async function processListing(
     );
   }
 
-  /*
-    SUPERFUND / ADEQ
-  */
+  /* ---------------------------------------------------------
+     ENVIRONMENT
+     --------------------------------------------------------- */
 
   if (
     values.environment.status ===
@@ -2742,9 +3436,9 @@ async function processListing(
     );
   }
 
-  /*
-    FLOODPLAIN / FLOODWAY
-  */
+  /* ---------------------------------------------------------
+     FLOOD
+     --------------------------------------------------------- */
 
   if (
     values.flood.status ===
@@ -2811,9 +3505,9 @@ async function processListing(
     );
   }
 
-  /*
-    AIRPORT
-  */
+  /* ---------------------------------------------------------
+     AIRPORT
+     --------------------------------------------------------- */
 
   if (
     Number.isFinite(lat) &&
@@ -2851,9 +3545,9 @@ async function processListing(
     );
   }
 
-  /*
-    RAILROAD
-  */
+  /* ---------------------------------------------------------
+     RAILROAD
+     --------------------------------------------------------- */
 
   if (
     values.railroad.status ===
@@ -2886,18 +3580,14 @@ async function processListing(
       intelligence.railroadName =
         rail.name;
 
-      tracker.success(
-        "railroad"
-      );
-
     } else {
       intelligence.railroadStatus =
         "Railroad: clear";
-
-      tracker.success(
-        "railroad"
-      );
     }
+
+    tracker.success(
+      "railroad"
+    );
 
   } else {
     tracker.fail(
@@ -2908,9 +3598,9 @@ async function processListing(
     );
   }
 
-  /*
-    TRANSIT
-  */
+  /* ---------------------------------------------------------
+     TRANSIT
+     --------------------------------------------------------- */
 
   if (
     values.transit.status ===
@@ -2943,18 +3633,14 @@ async function processListing(
       intelligence.transitName =
         transit.name;
 
-      tracker.success(
-        "transit"
-      );
-
     } else {
       intelligence.transitStatus =
         "Transit: clear";
-
-      tracker.success(
-        "transit"
-      );
     }
+
+    tracker.success(
+      "transit"
+    );
 
   } else {
     tracker.fail(
@@ -2965,18 +3651,18 @@ async function processListing(
     );
   }
 
-  /*
-    Display summary for the batch page.
-  */
+  /* ---------------------------------------------------------
+     TABLE SUMMARY
+     --------------------------------------------------------- */
 
-  const riskParts = [];
+  const riskParts =
+    [];
 
   if (
     intelligence.railroadStatus
   ) {
     riskParts.push(
-      intelligence
-        .railroadStatus
+      intelligence.railroadStatus
         .replace(
           /^Railroad:\s*/i,
           ""
@@ -2988,23 +3674,9 @@ async function processListing(
     intelligence.transitStatus
   ) {
     riskParts.push(
-      intelligence
-        .transitStatus
+      intelligence.transitStatus
         .replace(
           /^Transit:\s*/i,
-          ""
-        )
-    );
-  }
-
-  if (
-    intelligence.superfundStatus
-  ) {
-    riskParts.push(
-      intelligence
-        .superfundStatus
-        .replace(
-          /^Superfund:\s*/i,
           ""
         )
     );
@@ -3021,10 +3693,9 @@ async function processListing(
       ) ||
     "—";
 
-  /*
-    Save through the protected
-    bluevera.org endpoint.
-  */
+  /* ---------------------------------------------------------
+     SAVE
+     --------------------------------------------------------- */
 
   try {
     const save =
@@ -3040,9 +3711,18 @@ async function processListing(
           "armls_property_intelligence_batch"
       });
 
+    if (
+      save?.success ===
+      false
+    ) {
+      throw new Error(
+        save.error ||
+        "Save endpoint returned success false."
+      );
+    }
+
     result.saved =
-      save?.success !==
-      false;
+      true;
 
     result.propertyKey =
       save?.propertyKey ||
@@ -3076,11 +3756,15 @@ async function processListing(
     return result;
   }
 
+  /* ---------------------------------------------------------
+     FINAL STATUS
+     --------------------------------------------------------- */
+
   const successfulSources =
     tracker.rows
       .filter(
-        row =>
-          row.status ===
+        item =>
+          item.status ===
           "success"
       )
       .length;
@@ -3088,8 +3772,8 @@ async function processListing(
   const failedSources =
     tracker.rows
       .filter(
-        row =>
-          row.status ===
+        item =>
+          item.status ===
           "failed"
       )
       .length;
@@ -3113,6 +3797,10 @@ async function processListing(
   return result;
 }
 
+/* =========================================================
+   CONCURRENCY
+   ========================================================= */
+
 async function mapLimit(
   items,
   limit,
@@ -3123,7 +3811,8 @@ async function mapLimit(
       items.length
     );
 
-  let cursor = 0;
+  let cursor =
+    0;
 
   async function runWorker() {
     while (true) {
@@ -3184,19 +3873,21 @@ async function mapLimit(
     }
   }
 
+  const workerCount =
+    Math.min(
+      Math.max(
+        1,
+        limit
+      ),
+      items.length
+    );
+
   const workers =
     Array.from(
       {
         length:
-          Math.min(
-            Math.max(
-              1,
-              limit
-            ),
-            items.length
-          )
+          workerCount
       },
-
       () =>
         runWorker()
     );
@@ -3207,6 +3898,10 @@ async function mapLimit(
 
   return results;
 }
+
+/* =========================================================
+   VERCEL HANDLER
+   ========================================================= */
 
 export default async function handler(
   req,
@@ -3241,11 +3936,6 @@ export default async function handler(
           "Method not allowed. Use POST."
       });
   }
-
-  /*
-    Do not let the batch silently run
-    without the server authorization key.
-  */
 
   if (
     !BATCH_API_KEY
@@ -3286,8 +3976,8 @@ export default async function handler(
           normalizeListing
         )
         .filter(
-          item =>
-            item.address
+          listing =>
+            listing.address
         )
         .slice(
           0,
@@ -3314,13 +4004,6 @@ export default async function handler(
       ) ||
       1;
 
-    /*
-      The page can request 5, 10 or 25,
-      but the server intentionally limits
-      true simultaneous property processing
-      to three properties.
-    */
-
     const concurrency =
       Math.max(
         1,
@@ -3338,7 +4021,6 @@ export default async function handler(
             body.pauseMs
           ) ||
           0,
-
           5000
         )
       );
@@ -3353,7 +4035,7 @@ export default async function handler(
         concurrency,
 
         async listing => {
-          const value =
+          const result =
             await processListing(
               listing
             );
@@ -3366,36 +4048,30 @@ export default async function handler(
             );
           }
 
-          return value;
+          return result;
         }
       );
 
     const complete =
-      results
-        .filter(
-          item =>
-            item.status ===
-            "complete"
-        )
-        .length;
+      results.filter(
+        item =>
+          item.status ===
+          "complete"
+      ).length;
 
     const partial =
-      results
-        .filter(
-          item =>
-            item.status ===
-            "partial"
-        )
-        .length;
+      results.filter(
+        item =>
+          item.status ===
+          "partial"
+      ).length;
 
     const failed =
-      results
-        .filter(
-          item =>
-            item.status ===
-            "failed"
-        )
-        .length;
+      results.filter(
+        item =>
+          item.status ===
+          "failed"
+      ).length;
 
     return res
       .status(200)
