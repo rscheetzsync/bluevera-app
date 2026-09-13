@@ -2,26 +2,10 @@
   BlueVera Property Intelligence Batch Runner
   File:
   bluevera.app/api/property-intelligence-batch-run.js
-
-  PURPOSE
-  -------
-  1. Receive selected active ARMLS listings.
-  2. Resolve the exact property/location.
-  3. Gather the same major public intelligence used by map.html.
-  4. Save successful values through:
-       https://bluevera.org/api/property-intelligence-save
-
-  IMPORTANT
-  ---------
-  - Does NOT create claimed-property records.
-  - Failed sources do NOT overwrite last-known-good intelligence.
-  - Maximum 25 listings per request.
-  - Server-to-server save uses BLUEVERA_BATCH_API_KEY.
 */
 
 const PUBLIC_BASE = String(
-  process.env.BLUEVERA_PUBLIC_BASE_URL ||
-  "https://bluevera.org"
+  process.env.BLUEVERA_PUBLIC_BASE_URL || "https://bluevera.org"
 ).replace(/\/+$/, "");
 
 const BATCH_API_KEY = String(
@@ -32,10 +16,6 @@ const MAX_BATCH = 25;
 const PROPERTY_CONCURRENCY = 3;
 const DEFAULT_TIMEOUT_MS = 15000;
 
-/*
-  Public source endpoints.
-*/
-
 const SUPERFUND_QUERY =
   "https://services.arcgis.com/SzoH1oFM2apCSkx3/arcgis/rest/services/Superfund/FeatureServer/1/query";
 
@@ -44,10 +24,6 @@ const ADEQ_PLUME_QUERY =
 
 const PHX_ZONING_QUERY =
   "https://maps.phoenix.gov/pub/rest/services/Public/Zoning/MapServer/0/query";
-
-/*
-  Airport reference points.
-*/
 
 const AIRPORTS = [
   {
@@ -115,23 +91,16 @@ function finiteNumber(value) {
       : value
   );
 
-  return Number.isFinite(n)
-    ? n
-    : null;
+  return Number.isFinite(n) ? n : null;
 }
 
 function integerValue(value) {
   const n = finiteNumber(value);
-
-  return n === null
-    ? null
-    : Math.round(n);
+  return n === null ? null : Math.round(n);
 }
 
 function sleep(ms) {
-  return new Promise(
-    resolve => setTimeout(resolve, ms)
-  );
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function normalizeListing(raw) {
@@ -161,9 +130,7 @@ function detectZip(address) {
     /\b(\d{5})(?:-\d{4})?\b/
   );
 
-  return match
-    ? match[1]
-    : "";
+  return match ? match[1] : "";
 }
 
 function detectCity(
@@ -184,8 +151,7 @@ function detectCity(
     return explicit;
   }
 
-  const lower = clean(address)
-    .toLowerCase();
+  const lower = clean(address).toLowerCase();
 
   const cities = [
     "Paradise Valley",
@@ -206,8 +172,7 @@ function detectCity(
         lower.includes(
           city.toLowerCase()
         )
-    ) ||
-    ""
+    ) || ""
   );
 }
 
@@ -220,48 +185,36 @@ async function fetchJson(
   options = {},
   timeoutMs = DEFAULT_TIMEOUT_MS
 ) {
-  const controller =
-    new AbortController();
+  const controller = new AbortController();
 
-  const timer =
-    setTimeout(
-      () =>
-        controller.abort(),
-      timeoutMs
-    );
+  const timer = setTimeout(
+    () => controller.abort(),
+    timeoutMs
+  );
 
   try {
-    const response =
-      await fetch(
-        url,
-        {
-          ...options,
+    const response = await fetch(
+      url,
+      {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
 
-          signal:
-            controller.signal,
-
-          cache:
-            "no-store",
-
-          headers: {
-            Accept:
-              "application/json",
-
-            ...(options.headers || {})
-          }
+        headers: {
+          Accept: "application/json",
+          ...(options.headers || {})
         }
-      );
+      }
+    );
 
-    const text =
-      await response.text();
+    const text = await response.text();
 
     let data = null;
 
     try {
-      data =
-        text
-          ? JSON.parse(text)
-          : null;
+      data = text
+        ? JSON.parse(text)
+        : null;
     } catch {
       throw new Error(
         `Invalid JSON from ${url}`
@@ -281,10 +234,7 @@ async function fetchJson(
     return data;
 
   } catch (error) {
-    if (
-      error?.name ===
-      "AbortError"
-    ) {
+    if (error?.name === "AbortError") {
       throw new Error(
         `Request timed out: ${url}`
       );
@@ -304,24 +254,19 @@ async function postPublic(
   return fetchJson(
     `${PUBLIC_BASE}${path}`,
     {
-      method:
-        "POST",
+      method: "POST",
 
       headers: {
-        "Content-Type":
-          "application/json"
+        "Content-Type": "application/json"
       },
 
-      body:
-        JSON.stringify(
-          body
-        )
+      body: JSON.stringify(body)
     }
   );
 }
 
 /* =========================================================
-   SOURCE STATUS TRACKING
+   SOURCE TRACKER
    ========================================================= */
 
 function sourceResult(
@@ -376,36 +321,19 @@ function makeSourceTracker() {
 }
 
 /* =========================================================
-   UNIT / CONDO ADDRESS HANDLING
+   UNIT / CONDO HANDLING
    ========================================================= */
 
-/*
-  ARMLS can return addresses such as:
-
-  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
-
-  where "3" represents the unit but the word UNIT is omitted.
-*/
-
-function extractExplicitUnit(
-  value
-) {
-  const text =
-    clean(value);
+function extractExplicitUnit(value) {
+  const text = clean(value);
 
   const patterns = [
     /\b(?:unit|apt|apartment|suite|ste)\s*#?\s*([A-Za-z0-9-]+)\b/i,
     /#\s*([A-Za-z0-9-]+)\b/i
   ];
 
-  for (
-    const pattern
-    of patterns
-  ) {
-    const match =
-      text.match(
-        pattern
-      );
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
 
     if (
       match &&
@@ -420,67 +348,51 @@ function extractExplicitUnit(
   return "";
 }
 
-function extractBareArmlsUnit(
-  value
-) {
-  const text =
-    clean(value)
-      .split(",")[0]
-      .trim();
+/*
+  Detect ARMLS bare unit format.
 
-  /*
-    Example:
-      2234 W MEDLOCK Drive 3
+  Example:
+  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
 
-    Require a street-type word before the final token
-    so normal addresses are not casually treated as units.
-  */
+  The final "3" is treated as a possible unit because
+  it follows a recognized street type.
+*/
 
-  const match =
-    text.match(
-      /\b(?:ST|STREET|AVE|AVENUE|RD|ROAD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|BLVD|BOULEVARD|PKWY|PARKWAY|WAY|TRL|TRAIL|TER|TERRACE|CIR|CIRCLE)\s+([A-Za-z0-9-]+)$/i
-    );
+function extractBareArmlsUnit(value) {
+  const streetPortion = clean(value)
+    .split(",")[0]
+    .trim();
+
+  const match = streetPortion.match(
+    /\b(?:ST|STREET|AVE|AVENUE|RD|ROAD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|BLVD|BOULEVARD|PKWY|PARKWAY|WAY|TRL|TRAIL|TER|TERRACE|CIR|CIRCLE)\s+([A-Za-z0-9-]+)$/i
+  );
 
   return match?.[1]
     ? clean(match[1])
     : "";
 }
 
-function extractUnit(
-  value
-) {
+function extractUnit(value) {
   return (
-    extractExplicitUnit(
-      value
-    ) ||
-    extractBareArmlsUnit(
-      value
-    ) ||
+    extractExplicitUnit(value) ||
+    extractBareArmlsUnit(value) ||
     ""
   );
 }
 
 /*
-  Converts:
+  Exact BlueVera lookup keeps the unit.
 
-  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
-
-  to:
-
+  Example:
   2234 W MEDLOCK Drive UNIT 3, Phoenix, AZ 85015
-
-  for BlueVera exact-property lookup.
 */
 
 function buildUnitAwareLookupAddress(
   address,
   unit
 ) {
-  let text =
-    clean(address);
-
-  const cleanUnit =
-    clean(unit);
+  let text = clean(address);
+  const cleanUnit = clean(unit);
 
   if (!cleanUnit) {
     return text;
@@ -495,32 +407,25 @@ function buildUnitAwareLookupAddress(
     return text;
   }
 
-  const parts =
-    text.split(",");
+  const parts = text.split(",");
 
-  let street =
-    clean(
-      parts.shift()
+  let street = clean(
+    parts.shift()
+  );
+
+  const escapedUnit =
+    cleanUnit.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
     );
 
-  /*
-    Remove bare final unit.
-  */
-
-  const barePattern =
+  street = street.replace(
     new RegExp(
-      `\\s+${cleanUnit.replace(
-        /[.*+?^${}()|[\]\\]/g,
-        "\\$&"
-      )}$`,
+      `\\s+${escapedUnit}$`,
       "i"
-    );
-
-  street =
-    street.replace(
-      barePattern,
-      ""
-    );
+    ),
+    ""
+  );
 
   street =
     `${street} UNIT ${cleanUnit}`;
@@ -533,24 +438,95 @@ function buildUnitAwareLookupAddress(
     .join(", ");
 }
 
-/* =========================================================
-   EXACT BLUEVERA UNIT RESOLUTION
-   ========================================================= */
-
 /*
-  This mirrors map.html's unit-property behavior.
+  IMPORTANT FIX
 
-  Exact condo/unit identity is attempted first through
-  /api/listing-history.
+  The geocoder must receive the BUILDING/STREET address,
+  not a bare unit number at the end.
+
+  Example input:
+  2234 W MEDLOCK Drive 3, Phoenix, AZ 85015
+
+  Geocoder input:
+  2234 W MEDLOCK Drive, Phoenix, AZ 85015
 */
+
+function buildGeocoderAddress(
+  address
+) {
+  const original = clean(address);
+
+  const unit =
+    extractUnit(original);
+
+  if (!unit) {
+    return original;
+  }
+
+  const parts =
+    original.split(",");
+
+  let street =
+    clean(
+      parts.shift()
+    );
+
+  const escapedUnit =
+    unit.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+  /*
+    Remove explicit unit wording.
+  */
+
+  street = street
+    .replace(
+      new RegExp(
+        `\\s+(?:UNIT|APT|APARTMENT|SUITE|STE)\\s*#?\\s*${escapedUnit}$`,
+        "i"
+      ),
+      ""
+    )
+    .replace(
+      new RegExp(
+        `\\s+#\\s*${escapedUnit}$`,
+        "i"
+      ),
+      ""
+    );
+
+  /*
+    Remove bare ARMLS unit.
+  */
+
+  street = street.replace(
+    new RegExp(
+      `\\s+${escapedUnit}$`,
+      "i"
+    ),
+    ""
+  );
+
+  return [
+    street,
+    ...parts
+  ]
+    .map(clean)
+    .filter(Boolean)
+    .join(", ");
+}
+
+/* =========================================================
+   EXACT BLUEVERA UNIT LOOKUP
+   ========================================================= */
 
 async function resolveExactBlueVeraUnit(
   address
 ) {
   const unit =
-    extractUnit(
-      address
-    );
+    extractUnit(address);
 
   if (!unit) {
     return null;
@@ -623,18 +599,14 @@ async function resolveExactBlueVeraUnit(
         ),
 
       lat,
-
       lon,
-
       unit,
 
       exactBlueVeraMatch:
         true
     };
 
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.warn(
       "Exact BlueVera unit lookup failed:",
       error?.message ||
@@ -646,19 +618,16 @@ async function resolveExactBlueVeraUnit(
 }
 
 /* =========================================================
-   ADDRESS GEOCODING
+   GEOCODING
    ========================================================= */
-
-/*
-  Matches the normal map.html Arizona search strategy:
-  Nominatim, Arizona bounded.
-*/
 
 async function geocodeAddress(
   address
 ) {
   const input =
-    clean(address);
+    buildGeocoderAddress(
+      address
+    );
 
   if (!input) {
     throw new Error(
@@ -667,8 +636,7 @@ async function geocodeAddress(
   }
 
   const q =
-    /(\baz\b|\barizona\b)/i
-      .test(input)
+    /(\baz\b|\barizona\b)/i.test(input)
 
       ? input
 
@@ -720,7 +688,7 @@ async function geocodeAddress(
     !data.length
   ) {
     throw new Error(
-      "Address geocoder returned no Arizona result."
+      `Address geocoder returned no Arizona result for: ${input}`
     );
   }
 
@@ -757,12 +725,15 @@ async function geocodeAddress(
 
     address:
       first.address ||
-      {}
+      {},
+
+    geocoderAddress:
+      input
   };
 }
 
 /* =========================================================
-   PARCEL GEOMETRY CENTER
+   GEOMETRY CENTER
    ========================================================= */
 
 function centerFromGeometry(
@@ -770,11 +741,8 @@ function centerFromGeometry(
 ) {
   if (!geometry) {
     return {
-      lat:
-        null,
-
-      lon:
-        null
+      lat: null,
+      lon: null
     };
   }
 
@@ -797,8 +765,7 @@ function centerFromGeometry(
 
   if (
     !points.length &&
-    geometry.type ===
-      "Polygon" &&
+    geometry.type === "Polygon" &&
     Array.isArray(
       geometry.coordinates
     )
@@ -815,11 +782,8 @@ function centerFromGeometry(
 
   if (!points.length) {
     return {
-      lat:
-        null,
-
-      lon:
-        null
+      lat: null,
+      lon: null
     };
   }
 
@@ -836,38 +800,25 @@ function centerFromGeometry(
 
   if (!valid.length) {
     return {
-      lat:
-        null,
-
-      lon:
-        null
+      lat: null,
+      lon: null
     };
   }
 
   const lon =
     valid.reduce(
-      (
-        total,
-        point
-      ) =>
-        total +
-        Number(
-          point[0]
-        ),
+      (sum, point) =>
+        sum +
+        Number(point[0]),
       0
     ) /
     valid.length;
 
   const lat =
     valid.reduce(
-      (
-        total,
-        point
-      ) =>
-        total +
-        Number(
-          point[1]
-        ),
+      (sum, point) =>
+        sum +
+        Number(point[1]),
       0
     ) /
     valid.length;
@@ -881,16 +832,6 @@ function centerFromGeometry(
 /* =========================================================
    PROPERTY RESOLUTION
    ========================================================= */
-
-/*
-  Resolve the property exactly like the public map conceptually:
-
-  1. Try exact BlueVera unit/condo resolution.
-  2. Use those coordinates when available.
-  3. Otherwise geocode address.
-  4. Call Maricopa parcel WITH lat + lon + searched address.
-  5. Require parcel API data.ok === true.
-*/
 
 async function resolveProperty(
   listing
@@ -908,7 +849,7 @@ async function resolveProperty(
 
   /*
     STEP 1
-    Exact BlueVera condo/unit match.
+    Exact BlueVera unit/condo lookup.
   */
 
   const exactUnit =
@@ -928,23 +869,27 @@ async function resolveProperty(
 
   /*
     STEP 2
-    Normal geocode if exact BlueVera row did not have coordinates.
+    If the exact BlueVera row does not have coordinates,
+    geocode the BUILDING address without the bare unit.
   */
+
+  let geocodeResult =
+    null;
 
   if (
     !Number.isFinite(lat) ||
     !Number.isFinite(lon)
   ) {
-    const geocoded =
+    geocodeResult =
       await geocodeAddress(
         originalAddress
       );
 
     lat =
-      geocoded.lat;
+      geocodeResult.lat;
 
     lon =
-      geocoded.lon;
+      geocodeResult.lon;
   }
 
   if (
@@ -958,14 +903,11 @@ async function resolveProperty(
 
   /*
     STEP 3
-    Maricopa parcel.
+    Call the Maricopa parcel endpoint with:
+      - coordinates
+      - ORIGINAL ARMLS address
 
-    This is the critical change from the earlier version.
-
-    The public map sends:
-      lat
-      lon
-      address
+    We preserve the unit identity in the address parameter.
   */
 
   const parcelUrl =
@@ -1096,6 +1038,10 @@ async function resolveProperty(
 
     officialAddress,
 
+    geocoderAddress:
+      geocodeResult?.geocoderAddress ||
+      null,
+
     apn,
 
     livingSqft,
@@ -1117,7 +1063,7 @@ async function resolveProperty(
 }
 
 /* =========================================================
-   COUNTY SKETCH / ADDITIONS
+   COUNTY SKETCH
    ========================================================= */
 
 async function loadCountySketch(
@@ -1212,7 +1158,7 @@ function additionsStatus(
 }
 
 /* =========================================================
-   RENTCAST LISTING SQFT
+   RENTCAST
    ========================================================= */
 
 async function loadListingSqft(
@@ -1244,11 +1190,8 @@ async function loadListingSqft(
 
   if (!first) {
     return {
-      sqft:
-        null,
-
-      foundListing:
-        false
+      sqft: null,
+      foundListing: false
     };
   }
 
@@ -1408,9 +1351,7 @@ function extractPermitCount(
     of direct
   ) {
     const number =
-      finiteNumber(
-        value
-      );
+      finiteNumber(value);
 
     if (
       number !== null &&
@@ -1427,13 +1368,9 @@ function extractPermitCount(
       data
     );
 
-  if (
-    Array.isArray(array)
-  ) {
-    return array.length;
-  }
-
-  return null;
+  return Array.isArray(array)
+    ? array.length
+    : null;
 }
 
 function permitStatus(
@@ -1463,6 +1400,7 @@ async function loadPermits(
     address,
     fullAddress:
       address,
+
     apn:
       apn ||
       null
@@ -1612,16 +1550,15 @@ async function loadPermits(
         ]
       );
 
-    const success =
-      results
-        .filter(
-          result =>
-            result.status ===
-            "fulfilled"
-        );
+    const successful =
+      results.filter(
+        result =>
+          result.status ===
+          "fulfilled"
+      );
 
     if (
-      !success.length
+      !successful.length
     ) {
       throw new Error(
         "Both Mesa permit sources failed."
@@ -1636,7 +1573,7 @@ async function loadPermits(
 
     for (
       const result
-      of success
+      of successful
     ) {
       const rows =
         extractPermitArray(
@@ -1695,7 +1632,7 @@ async function loadPermits(
 }
 
 /* =========================================================
-   ARCGIS HELPERS
+   ARCGIS
    ========================================================= */
 
 async function arcgisPointQuery(
@@ -2003,7 +1940,7 @@ async function loadZoning(
 }
 
 /* =========================================================
-   SUPERFUND / ADEQ
+   ENVIRONMENT
    ========================================================= */
 
 async function loadEnvironmental(
@@ -2011,11 +1948,8 @@ async function loadEnvironmental(
   lon
 ) {
   const output = {
-    superfund:
-      null,
-
-    adeq:
-      null
+    superfund: null,
+    adeq: null
   };
 
   const results =
@@ -2226,7 +2160,7 @@ async function loadEnvironmental(
 }
 
 /* =========================================================
-   FLOODPLAIN / FLOODWAY
+   FLOOD
    ========================================================= */
 
 async function loadFlood(
@@ -2293,7 +2227,7 @@ async function loadFlood(
 }
 
 /* =========================================================
-   DISTANCES
+   DISTANCE HELPERS
    ========================================================= */
 
 function haversineMiles(
@@ -2355,15 +2289,7 @@ function nearestAirport(
   lat,
   lon
 ) {
-  if (
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lon)
-  ) {
-    return null;
-  }
-
-  let best =
-    null;
+  let best = null;
 
   for (
     const airport
@@ -2424,9 +2350,7 @@ function airportStatusFromMiles(
     );
   }
 
-  return (
-    "Airport: clear"
-  );
+  return "Airport: clear";
 }
 
 /* =========================================================
@@ -2436,8 +2360,7 @@ function airportStatusFromMiles(
 function overpassElementsPoint(
   elements
 ) {
-  const points =
-    [];
+  const points = [];
 
   for (
     const element
@@ -2486,8 +2409,7 @@ async function overpassNearest(
   const radiusM =
     12875;
 
-  let selectors =
-    "";
+  let selectors = "";
 
   if (
     kind ===
@@ -2692,9 +2614,7 @@ function distanceStatus(
     );
   }
 
-  return (
-    `${label}: clear`
-  );
+  return `${label}: clear`;
 }
 
 /* =========================================================
@@ -2736,7 +2656,7 @@ async function saveIntelligence(
 }
 
 /* =========================================================
-   PROCESS ONE PROPERTY
+   PROCESS PROPERTY
    ========================================================= */
 
 async function processListing(
@@ -2795,10 +2715,6 @@ async function processListing(
 
     return result;
   }
-
-  /* ---------------------------------------------------------
-     PROPERTY / PARCEL
-     --------------------------------------------------------- */
 
   let parcel;
 
@@ -2912,12 +2828,7 @@ async function processListing(
       lon
   };
 
-  const intelligence =
-    {};
-
-  /*
-    County SqFt.
-  */
+  const intelligence = {};
 
   if (
     Number.isFinite(
@@ -2933,10 +2844,6 @@ async function processListing(
     intelligence.countySqftSource =
       "Maricopa County Assessor";
   }
-
-  /* ---------------------------------------------------------
-     SOURCE JOBS
-     --------------------------------------------------------- */
 
   const jobs = {
     sketch:
@@ -3057,8 +2964,7 @@ async function processListing(
       )
     );
 
-  const values =
-    {};
+  const values = {};
 
   names.forEach(
     (
@@ -3070,9 +2976,7 @@ async function processListing(
     }
   );
 
-  /* ---------------------------------------------------------
-     ADDITIONS
-     --------------------------------------------------------- */
+  /* ADDITIONS */
 
   if (
     values.sketch.status ===
@@ -3138,9 +3042,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     LISTING SQFT
-     --------------------------------------------------------- */
+  /* SQFT */
 
   if (
     values.listingSqft.status ===
@@ -3252,9 +3154,7 @@ async function processListing(
     }
   }
 
-  /* ---------------------------------------------------------
-     PERMITS
-     --------------------------------------------------------- */
+  /* PERMITS */
 
   if (
     values.permits.status ===
@@ -3300,9 +3200,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     ZONING
-     --------------------------------------------------------- */
+  /* ZONING */
 
   if (
     values.zoning.status ===
@@ -3363,9 +3261,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     ENVIRONMENT
-     --------------------------------------------------------- */
+  /* ENVIRONMENT */
 
   if (
     values.environment.status ===
@@ -3436,9 +3332,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     FLOOD
-     --------------------------------------------------------- */
+  /* FLOOD */
 
   if (
     values.flood.status ===
@@ -3505,9 +3399,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     AIRPORT
-     --------------------------------------------------------- */
+  /* AIRPORT */
 
   if (
     Number.isFinite(lat) &&
@@ -3545,9 +3437,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     RAILROAD
-     --------------------------------------------------------- */
+  /* RAIL */
 
   if (
     values.railroad.status ===
@@ -3566,11 +3456,8 @@ async function processListing(
           "Railroad",
           rail.miles,
           {
-            high:
-              1,
-
-            nearby:
-              2
+            high: 1,
+            nearby: 2
           }
         );
 
@@ -3598,9 +3485,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     TRANSIT
-     --------------------------------------------------------- */
+  /* TRANSIT */
 
   if (
     values.transit.status ===
@@ -3619,11 +3504,8 @@ async function processListing(
           "Transit",
           transit.miles,
           {
-            high:
-              0.5,
-
-            nearby:
-              2
+            high: 0.5,
+            nearby: 2
           }
         );
 
@@ -3651,12 +3533,7 @@ async function processListing(
     );
   }
 
-  /* ---------------------------------------------------------
-     TABLE SUMMARY
-     --------------------------------------------------------- */
-
-  const riskParts =
-    [];
+  const riskParts = [];
 
   if (
     intelligence.railroadStatus
@@ -3693,9 +3570,7 @@ async function processListing(
       ) ||
     "—";
 
-  /* ---------------------------------------------------------
-     SAVE
-     --------------------------------------------------------- */
+  /* SAVE */
 
   try {
     const save =
@@ -3732,9 +3607,7 @@ async function processListing(
       Array.isArray(
         save?.changedFields
       )
-
         ? save.changedFields
-
         : [];
 
   } catch (
@@ -3755,10 +3628,6 @@ async function processListing(
 
     return result;
   }
-
-  /* ---------------------------------------------------------
-     FINAL STATUS
-     --------------------------------------------------------- */
 
   const successfulSources =
     tracker.rows
@@ -3811,8 +3680,7 @@ async function mapLimit(
       items.length
     );
 
-  let cursor =
-    0;
+  let cursor = 0;
 
   async function runWorker() {
     while (true) {
@@ -3888,6 +3756,7 @@ async function mapLimit(
         length:
           workerCount
       },
+
       () =>
         runWorker()
     );
@@ -3900,7 +3769,7 @@ async function mapLimit(
 }
 
 /* =========================================================
-   VERCEL HANDLER
+   HANDLER
    ========================================================= */
 
 export default async function handler(
@@ -4021,6 +3890,7 @@ export default async function handler(
             body.pauseMs
           ) ||
           0,
+
           5000
         )
       );
