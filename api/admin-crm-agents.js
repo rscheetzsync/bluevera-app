@@ -1,25 +1,35 @@
-const { createClient } = require("@supabase/supabase-js");
+// api/admin-crm-agents.js
+// BlueVera CRM Agents API
+// Uses native fetch - NO @supabase/supabase-js package required.
 
 function send(res, status, body) {
   return res.status(status).json(body);
 }
 
-function getBearerToken(req) {
-  const header = String(req.headers.authorization || "");
-
-  if (!/^Bearer\s+/i.test(header)) {
-    return "";
-  }
-
-  return header.replace(/^Bearer\s+/i, "").trim();
+function clean(value) {
+  return String(value ?? "").trim();
 }
 
-function clean(value) {
-  if (value === undefined || value === null) {
-    return "";
-  }
+function bearerToken(req) {
+  const header = String(req.headers.authorization || "");
 
-  return String(value).trim();
+  return /^Bearer\s+/i.test(header)
+    ? header.replace(/^Bearer\s+/i, "").trim()
+    : "";
+}
+
+async function readJson(response) {
+  const text = await response.text();
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      raw: text
+    };
+  }
 }
 
 module.exports = async function handler(req, res) {
@@ -27,7 +37,7 @@ module.exports = async function handler(req, res) {
 
   try {
     // =====================================================
-    // LOAD ENVIRONMENT VARIABLES INSIDE THE FUNCTION
+    // ENVIRONMENT VARIABLES
     // =====================================================
 
     const supabaseUrl =
@@ -49,30 +59,15 @@ module.exports = async function handler(req, res) {
     if (!serviceRoleKey) {
       return send(res, 500, {
         ok: false,
-        error: "Supabase service role key is missing."
+        error: "Supabase service key is missing."
       });
     }
 
     // =====================================================
-    // CREATE SUPABASE CLIENT
+    // VERIFY LOGGED-IN ADMIN
     // =====================================================
 
-    const supabase = createClient(
-      supabaseUrl,
-      serviceRoleKey,
-      {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false
-        }
-      }
-    );
-
-    // =====================================================
-    // VERIFY ADMIN SESSION
-    // =====================================================
-
-    const token = getBearerToken(req);
+    const token = bearerToken(req);
 
     if (!token) {
       return send(res, 401, {
@@ -81,15 +76,24 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const {
-      data: authData,
-      error: authError
-    } = await supabase.auth.getUser(token);
+    const authResponse = await fetch(
+      `${supabaseUrl}/auth/v1/user`,
+      {
+        method: "GET",
 
-    if (authError || !authData?.user) {
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${token}`
+        }
+      }
+    );
+
+    const authUser = await readJson(authResponse);
+
+    if (!authResponse.ok || !authUser?.id) {
       console.error(
-        "Admin authentication failed:",
-        authError
+        "CRM auth failed:",
+        authUser
       );
 
       return send(res, 401, {
@@ -98,41 +102,64 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const authUser = authData.user;
+    const email =
+      clean(authUser.email).toLowerCase();
+
+    if (!email) {
+      return send(res, 401, {
+        ok: false,
+        error: "Authenticated user email is missing."
+      });
+    }
 
     // =====================================================
     // VERIFY ADMIN_USERS RECORD
     // =====================================================
 
-    const {
-      data: adminUser,
-      error: adminError
-    } = await supabase
-      .from("admin_users")
-      .select(
-        "id,email,role,is_active,display_name,default_page"
-      )
-      .eq(
-        "email",
-        String(authUser.email || "")
-          .trim()
-          .toLowerCase()
-      )
-      .maybeSingle();
+    const adminParams =
+      new URLSearchParams({
+        email: `eq.${email}`,
+        select:
+          "id,email,role,is_active,display_name,default_page",
+        limit: "1"
+      });
 
-    if (adminError) {
+    const adminResponse = await fetch(
+      `${supabaseUrl}/rest/v1/admin_users?${adminParams.toString()}`,
+      {
+        method: "GET",
+
+        headers: {
+          apikey: serviceRoleKey,
+          Authorization: `Bearer ${serviceRoleKey}`,
+          Accept: "application/json"
+        }
+      }
+    );
+
+    const adminRows =
+      await readJson(adminResponse);
+
+    if (!adminResponse.ok) {
       console.error(
         "admin_users lookup failed:",
-        adminError
+        adminRows
       );
 
       return send(res, 500, {
         ok: false,
         error: "Unable to verify admin account.",
-        details: adminError.message,
-        code: adminError.code
+        details:
+          adminRows?.message ||
+          adminRows?.error ||
+          null
       });
     }
+
+    const adminUser =
+      Array.isArray(adminRows)
+        ? adminRows[0]
+        : null;
 
     if (!adminUser) {
       return send(res, 403, {
@@ -164,17 +191,14 @@ module.exports = async function handler(req, res) {
 
       const page =
         Math.max(
-          Number.parseInt(
-            req.query.page || "1",
-            10
-          ) || 1,
+          parseInt(req.query.page || "1", 10) || 1,
           1
         );
 
       const limit =
         Math.min(
           Math.max(
-            Number.parseInt(
+            parseInt(
               req.query.limit || "50",
               10
             ) || 50,
@@ -183,31 +207,42 @@ module.exports = async function handler(req, res) {
           100
         );
 
-      const from =
+      const offset =
         (page - 1) * limit;
 
-      const to =
-        from + limit - 1;
+      const params =
+        new URLSearchParams();
 
-      let query = supabase
-        .from("crm_agents")
-        .select("*", {
-          count: "exact"
-        })
-        .eq("is_active", true);
+      params.set("select", "*");
+      params.set("is_active", "eq.true");
+
+      params.set(
+        "order",
+        "last_name.asc,first_name.asc"
+      );
+
+      params.set(
+        "limit",
+        String(limit)
+      );
+
+      params.set(
+        "offset",
+        String(offset)
+      );
 
       // OWNER FILTER
       if (owner === "mine") {
-        query = query.eq(
+        params.set(
           "assigned_user_id",
-          adminUser.id
+          `eq.${adminUser.id}`
         );
       }
 
       if (owner === "unassigned") {
-        query = query.is(
+        params.set(
           "assigned_user_id",
-          null
+          "is.null"
         );
       }
 
@@ -216,99 +251,154 @@ module.exports = async function handler(req, res) {
         status &&
         status !== "all"
       ) {
-        query = query.eq(
+        params.set(
           "status",
-          status
+          `eq.${status}`
         );
       }
 
-      // SEARCH
+      // SEARCH FILTER
       if (search) {
         const safeSearch =
           search
             .replace(/,/g, " ")
+            .replace(/\(/g, "")
+            .replace(/\)/g, "")
             .trim();
 
-        query = query.or(
+        const pattern =
+          `*${safeSearch}*`;
+
+        params.set(
+          "or",
           [
-            `first_name.ilike.%${safeSearch}%`,
-            `last_name.ilike.%${safeSearch}%`,
-            `email.ilike.%${safeSearch}%`,
-            `phone.ilike.%${safeSearch}%`,
-            `source.ilike.%${safeSearch}%`,
-            `notes.ilike.%${safeSearch}%`
+            `first_name.ilike.${pattern}`,
+            `last_name.ilike.${pattern}`,
+            `email.ilike.${pattern}`,
+            `phone.ilike.${pattern}`,
+            `source.ilike.${pattern}`,
+            `notes.ilike.${pattern}`
           ].join(",")
         );
       }
 
-      const {
-        data: agents,
-        error: agentsError,
-        count
-      } = await query
-        .order(
-          "last_name",
-          { ascending: true }
-        )
-        .order(
-          "first_name",
-          { ascending: true }
-        )
-        .range(from, to);
+      const agentsResponse =
+        await fetch(
+          `${supabaseUrl}/rest/v1/crm_agents?${params.toString()}`,
+          {
+            method: "GET",
 
-      if (agentsError) {
+            headers: {
+              apikey: serviceRoleKey,
+              Authorization:
+                `Bearer ${serviceRoleKey}`,
+
+              Prefer:
+                "count=exact",
+
+              Accept:
+                "application/json"
+            }
+          }
+        );
+
+      const agents =
+        await readJson(
+          agentsResponse
+        );
+
+      if (!agentsResponse.ok) {
         console.error(
-          "crm_agents query failed:",
-          agentsError
+          "crm_agents load failed:",
+          agents
         );
 
         return send(res, 500, {
           ok: false,
-          error: "Unable to load CRM agents.",
-          details: agentsError.message,
-          code: agentsError.code,
-          hint: agentsError.hint || null
+          error:
+            "Unable to load CRM agents.",
+          details:
+            agents?.message ||
+            agents?.error ||
+            null
         });
       }
 
-      const formattedAgents =
-        (agents || []).map(
-          agent => ({
-            ...agent,
+      let total =
+        Array.isArray(agents)
+          ? agents.length
+          : 0;
 
-            full_name:
-              [
-                agent.first_name,
-                agent.last_name
-              ]
-                .filter(Boolean)
-                .join(" ")
-                .trim()
-          })
+      const contentRange =
+        agentsResponse.headers.get(
+          "content-range"
         );
+
+      if (contentRange) {
+        const match =
+          contentRange.match(
+            /\/(\d+|\*)$/
+          );
+
+        if (
+          match &&
+          match[1] !== "*"
+        ) {
+          total =
+            parseInt(
+              match[1],
+              10
+            ) || total;
+        }
+      }
+
+      const formattedAgents =
+        (Array.isArray(agents)
+          ? agents
+          : []
+        ).map(agent => ({
+          ...agent,
+
+          full_name:
+            [
+              agent.first_name,
+              agent.last_name
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .trim()
+        }));
 
       return send(res, 200, {
         ok: true,
 
         admin: {
-          id: adminUser.id,
-          email: adminUser.email,
+          id:
+            adminUser.id,
+
+          email:
+            adminUser.email,
+
           display_name:
-            adminUser.display_name || null,
-          role: adminUser.role
+            adminUser.display_name ||
+            null,
+
+          role:
+            adminUser.role
         },
 
-        agents: formattedAgents,
+        agents:
+          formattedAgents,
 
         pagination: {
           page,
           limit,
-          total: count || 0,
+          total,
 
           totalPages:
-            count
+            total > 0
               ? Math.ceil(
-                  count / limit
+                  total / limit
                 )
               : 0
         }
@@ -316,24 +406,32 @@ module.exports = async function handler(req, res) {
     }
 
     // =====================================================
-    // POST - ADD CRM AGENT
+    // ADD CRM AGENT
     // =====================================================
 
     if (req.method === "POST") {
-      const body = req.body || {};
+      const body =
+        req.body || {};
 
       const firstName =
-        clean(body.first_name);
+        clean(
+          body.first_name
+        );
 
       const lastName =
-        clean(body.last_name);
+        clean(
+          body.last_name
+        );
 
       const email =
-        clean(body.email)
-          .toLowerCase();
+        clean(
+          body.email
+        ).toLowerCase();
 
       const phone =
-        clean(body.phone);
+        clean(
+          body.phone
+        );
 
       if (
         !firstName &&
@@ -341,11 +439,15 @@ module.exports = async function handler(req, res) {
       ) {
         return send(res, 400, {
           ok: false,
-          error: "Agent name is required."
+          error:
+            "Agent name is required."
         });
       }
 
-      if (!email && !phone) {
+      if (
+        !email &&
+        !phone
+      ) {
         return send(res, 400, {
           ok: false,
           error:
@@ -353,42 +455,53 @@ module.exports = async function handler(req, res) {
         });
       }
 
+      // DUPLICATE EMAIL CHECK
       if (email) {
-        const {
-          data: existing,
-          error: existingError
-        } = await supabase
-          .from("crm_agents")
-          .select(
-            "id,first_name,last_name,email"
-          )
-          .ilike(
-            "email",
-            email
-          )
-          .maybeSingle();
+        const duplicateParams =
+          new URLSearchParams({
+            email:
+              `eq.${email}`,
 
-        if (existingError) {
-          console.error(
-            "Duplicate check failed:",
-            existingError
+            select:
+              "id,first_name,last_name,email",
+
+            limit:
+              "1"
+          });
+
+        const duplicateResponse =
+          await fetch(
+            `${supabaseUrl}/rest/v1/crm_agents?${duplicateParams.toString()}`,
+            {
+              headers: {
+                apikey:
+                  serviceRoleKey,
+
+                Authorization:
+                  `Bearer ${serviceRoleKey}`
+              }
+            }
           );
 
-          return send(res, 500, {
-            ok: false,
-            error:
-              "Unable to check CRM duplicate.",
-            details:
-              existingError.message
-          });
-        }
+        const duplicateRows =
+          await readJson(
+            duplicateResponse
+          );
 
-        if (existing) {
+        if (
+          duplicateResponse.ok &&
+          Array.isArray(
+            duplicateRows
+          ) &&
+          duplicateRows.length
+        ) {
           return send(res, 409, {
             ok: false,
             error:
               "This email already exists in CRM.",
-            agent: existing
+
+            agent:
+              duplicateRows[0]
           });
         }
       }
@@ -419,7 +532,8 @@ module.exports = async function handler(req, res) {
         status:
           clean(
             body.status
-          ) || "new_contact",
+          ) ||
+          "new_contact",
 
         source:
           clean(
@@ -443,25 +557,50 @@ module.exports = async function handler(req, res) {
             body.notes
           ) || null,
 
-        is_active: true,
+        is_active:
+          true,
 
         updated_at:
-          new Date().toISOString()
+          new Date()
+            .toISOString()
       };
 
-      const {
-        data,
-        error
-      } = await supabase
-        .from("crm_agents")
-        .insert(newAgent)
-        .select("*")
-        .single();
+      const insertResponse =
+        await fetch(
+          `${supabaseUrl}/rest/v1/crm_agents`,
+          {
+            method: "POST",
 
-      if (error) {
+            headers: {
+              apikey:
+                serviceRoleKey,
+
+              Authorization:
+                `Bearer ${serviceRoleKey}`,
+
+              "Content-Type":
+                "application/json",
+
+              Prefer:
+                "return=representation"
+            },
+
+            body:
+              JSON.stringify(
+                newAgent
+              )
+          }
+        );
+
+      const inserted =
+        await readJson(
+          insertResponse
+        );
+
+      if (!insertResponse.ok) {
         console.error(
           "CRM insert failed:",
-          error
+          inserted
         );
 
         return send(res, 500, {
@@ -469,18 +608,23 @@ module.exports = async function handler(req, res) {
           error:
             "Unable to add CRM agent.",
           details:
-            error.message
+            inserted?.message ||
+            null
         });
       }
 
       return send(res, 201, {
         ok: true,
-        agent: data
+
+        agent:
+          Array.isArray(inserted)
+            ? inserted[0]
+            : inserted
       });
     }
 
     // =====================================================
-    // PATCH - UPDATE CRM AGENT
+    // UPDATE CRM AGENT
     // =====================================================
 
     if (req.method === "PATCH") {
@@ -541,22 +685,46 @@ module.exports = async function handler(req, res) {
       }
 
       updates.updated_at =
-        new Date().toISOString();
+        new Date()
+          .toISOString();
 
-      const {
-        data,
-        error
-      } = await supabase
-        .from("crm_agents")
-        .update(updates)
-        .eq("id", id)
-        .select("*")
-        .maybeSingle();
+      const updateResponse =
+        await fetch(
+          `${supabaseUrl}/rest/v1/crm_agents?id=eq.${encodeURIComponent(id)}`,
+          {
+            method:
+              "PATCH",
 
-      if (error) {
+            headers: {
+              apikey:
+                serviceRoleKey,
+
+              Authorization:
+                `Bearer ${serviceRoleKey}`,
+
+              "Content-Type":
+                "application/json",
+
+              Prefer:
+                "return=representation"
+            },
+
+            body:
+              JSON.stringify(
+                updates
+              )
+          }
+        );
+
+      const updated =
+        await readJson(
+          updateResponse
+        );
+
+      if (!updateResponse.ok) {
         console.error(
           "CRM update failed:",
-          error
+          updated
         );
 
         return send(res, 500, {
@@ -564,11 +732,17 @@ module.exports = async function handler(req, res) {
           error:
             "Unable to update CRM agent.",
           details:
-            error.message
+            updated?.message ||
+            null
         });
       }
 
-      if (!data) {
+      if (
+        !Array.isArray(
+          updated
+        ) ||
+        !updated.length
+      ) {
         return send(res, 404, {
           ok: false,
           error:
@@ -578,23 +752,26 @@ module.exports = async function handler(req, res) {
 
       return send(res, 200, {
         ok: true,
-        agent: data
+        agent:
+          updated[0]
       });
     }
 
     return send(res, 405, {
       ok: false,
-      error: "Method not allowed."
+      error:
+        "Method not allowed."
     });
 
   } catch (error) {
     console.error(
-      "admin-crm-agents fatal error:",
+      "admin-crm-agents fatal:",
       error
     );
 
     return send(res, 500, {
       ok: false,
+
       error:
         error?.message ||
         "Unexpected CRM API error."
