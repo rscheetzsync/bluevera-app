@@ -1,235 +1,229 @@
 const { createClient } = require("@supabase/supabase-js");
 
-function getSupabaseAdmin() {
-  const supabaseUrl =
-    process.env.SUPABASE_URL ||
-    process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  const serviceRoleKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+const SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SERVICE_KEY ||
+  process.env.SUPABASE_SECRET_KEY;
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Missing Supabase environment variables.");
-  }
-
-  return createClient(supabaseUrl, serviceRoleKey, {
+const supabase = createClient(
+  SUPABASE_URL || "",
+  SERVICE_ROLE_KEY || "",
+  {
     auth: {
       persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+      autoRefreshToken: false
+    }
+  }
+);
+
+function send(res, status, body) {
+  return res.status(status).json(body);
 }
 
-async function getAdminUser(supabase, authUser) {
-  if (!authUser) return null;
+function bearerToken(req) {
+  const header = String(
+    req.headers.authorization || ""
+  );
 
-  const email = String(authUser.email || "").trim().toLowerCase();
-
-  if (!email) return null;
-
-  const { data, error } = await supabase
-    .from("admin_users")
-    .select(`
-      id,
-      email,
-      role,
-      is_active,
-      display_name,
-      default_page
-    `)
-    .ilike("email", email)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Admin lookup failed:", error);
-    return null;
+  if (!header.toLowerCase().startsWith("bearer ")) {
+    return "";
   }
 
-  if (!data || data.is_active === false) {
-    return null;
-  }
-
-  return data;
+  return header.slice(7).trim();
 }
 
-function normalizeText(value) {
-  if (value === undefined || value === null) return null;
-
-  const cleaned = String(value).trim();
-
-  return cleaned === "" ? null : cleaned;
-}
-
-function normalizeEmail(value) {
-  const email = normalizeText(value);
-
-  return email ? email.toLowerCase() : null;
-}
-
-function fullName(agent) {
-  return [agent.first_name, agent.last_name]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
-}
-
-module.exports = async function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store");
-
-  if (!["GET", "POST", "PATCH"].includes(req.method)) {
-    return res.status(405).json({
-      ok: false,
-      error: "Method not allowed",
-    });
-  }
-
-  let supabase;
-
-  try {
-    supabase = getSupabaseAdmin();
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      ok: false,
-      error: "Server configuration error",
-    });
-  }
-
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.substring(7).trim()
-    : null;
+async function requireAdmin(req) {
+  const token = bearerToken(req);
 
   if (!token) {
-    return res.status(401).json({
-      ok: false,
-      error: "Missing authentication token",
-    });
+    throw Object.assign(
+      new Error("Missing admin token."),
+      { statusCode: 401 }
+    );
   }
 
   const {
     data: authData,
-    error: authError,
+    error: authError
   } = await supabase.auth.getUser(token);
 
-  if (authError || !authData?.user) {
-    console.error("Auth failed:", authError);
-
-    return res.status(401).json({
-      ok: false,
-      error: "Invalid or expired session",
-    });
+  if (
+    authError ||
+    !authData?.user
+  ) {
+    throw Object.assign(
+      new Error("Invalid or expired admin session."),
+      { statusCode: 401 }
+    );
   }
 
-  const adminUser = await getAdminUser(
-    supabase,
-    authData.user
-  );
+  const user = authData.user;
+
+  const {
+    data: adminUser,
+    error: adminError
+  } = await supabase
+    .from("admin_users")
+    .select(
+      "id,email,role,is_active,display_name,default_page"
+    )
+    .eq(
+      "email",
+      String(user.email || "").toLowerCase()
+    )
+    .maybeSingle();
+
+  if (adminError) {
+    console.error(
+      "Admin lookup failed:",
+      adminError
+    );
+
+    throw Object.assign(
+      new Error("Unable to verify admin account."),
+      { statusCode: 500 }
+    );
+  }
 
   if (!adminUser) {
-    return res.status(403).json({
+    throw Object.assign(
+      new Error("Admin access required."),
+      { statusCode: 403 }
+    );
+  }
+
+  if (adminUser.is_active === false) {
+    throw Object.assign(
+      new Error("Admin account is disabled."),
+      { statusCode: 403 }
+    );
+  }
+
+  return adminUser;
+}
+
+function clean(value) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
+module.exports = async function handler(
+  req,
+  res
+) {
+  res.setHeader(
+    "Cache-Control",
+    "no-store"
+  );
+
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    return send(res, 500, {
       ok: false,
-      error: "Admin access required",
+      error:
+        "CRM API is missing Supabase environment variables."
     });
   }
 
-  // ======================================================
-  // GET CRM AGENTS
-  // ======================================================
+  try {
+    const adminUser =
+      await requireAdmin(req);
 
-  if (req.method === "GET") {
-    try {
-      const search = normalizeText(req.query.search);
-      const owner = normalizeText(req.query.owner) || "all";
-      const status = normalizeText(req.query.status);
+    // ==================================================
+    // GET AGENTS
+    // ==================================================
 
-      const requestedPage = Number(req.query.page || 1);
-      const requestedLimit = Number(req.query.limit || 50);
+    if (req.method === "GET") {
+      const owner =
+        clean(req.query.owner) || "all";
+
+      const status =
+        clean(req.query.status);
+
+      const search =
+        clean(req.query.search);
 
       const page =
-        Number.isFinite(requestedPage) && requestedPage > 0
-          ? Math.floor(requestedPage)
-          : 1;
+        Math.max(
+          parseInt(req.query.page || "1", 10),
+          1
+        );
 
       const limit =
-        Number.isFinite(requestedLimit)
-          ? Math.min(
-              Math.max(Math.floor(requestedLimit), 1),
-              100
-            )
-          : 50;
+        Math.min(
+          Math.max(
+            parseInt(
+              req.query.limit || "50",
+              10
+            ),
+            1
+          ),
+          100
+        );
 
-      const from = (page - 1) * limit;
-      const to = from + limit - 1;
+      const from =
+        (page - 1) * limit;
+
+      const to =
+        from + limit - 1;
 
       let query = supabase
         .from("crm_agents")
-        .select(
-          `
-          id,
-          bluevera_agent_id,
-          brokerage_id,
-          first_name,
-          last_name,
-          email,
-          phone,
-          license_number,
-          status,
-          source,
-          assigned_user_id,
-          last_contact_at,
-          next_follow_up_at,
-          signed_up,
-          notes,
-          is_active,
-          created_at,
-          updated_at
-        `,
-          { count: "exact" }
-        )
+        .select("*", {
+          count: "exact"
+        })
         .eq("is_active", true);
 
-      // Owner filter:
-      // all
-      // mine
-      // unassigned
-      // explicit admin user UUID
+      // ------------------------------------------
+      // OWNER FILTER
+      // ------------------------------------------
 
       if (owner === "mine") {
         query = query.eq(
           "assigned_user_id",
           adminUser.id
         );
-      } else if (owner === "unassigned") {
+      }
+
+      if (owner === "unassigned") {
         query = query.is(
           "assigned_user_id",
           null
         );
-      } else if (
-        owner !== "all" &&
-        /^[0-9a-fA-F-]{36}$/.test(owner)
-      ) {
-        query = query.eq(
-          "assigned_user_id",
-          owner
-        );
       }
 
-      if (status && status !== "all") {
+      // ------------------------------------------
+      // STATUS FILTER
+      // ------------------------------------------
+
+      if (
+        status &&
+        status !== "all"
+      ) {
         query = query.eq(
           "status",
           status
         );
       }
 
+      // ------------------------------------------
+      // SEARCH
+      // ------------------------------------------
+
       if (search) {
-        const safeSearch = search
-          .replace(/,/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
+        const safeSearch =
+          search
+            .replace(/,/g, " ")
+            .trim();
 
         query = query.or(
           [
@@ -237,9 +231,8 @@ module.exports = async function handler(req, res) {
             `last_name.ilike.%${safeSearch}%`,
             `email.ilike.%${safeSearch}%`,
             `phone.ilike.%${safeSearch}%`,
-            `license_number.ilike.%${safeSearch}%`,
             `source.ilike.%${safeSearch}%`,
-            `notes.ilike.%${safeSearch}%`,
+            `notes.ilike.%${safeSearch}%`
           ].join(",")
         );
       }
@@ -247,246 +240,252 @@ module.exports = async function handler(req, res) {
       const {
         data,
         error,
-        count,
+        count
       } = await query
-        .order("last_name", {
-          ascending: true,
-          nullsFirst: false,
-        })
-        .order("first_name", {
-          ascending: true,
-          nullsFirst: false,
-        })
+        .order(
+          "last_name",
+          { ascending: true }
+        )
+        .order(
+          "first_name",
+          { ascending: true }
+        )
         .range(from, to);
 
       if (error) {
         console.error(
-          "CRM agent load failed:",
+          "CRM AGENTS SUPABASE ERROR:",
           error
         );
 
-        return res.status(500).json({
+        return send(res, 500, {
           ok: false,
-          error: "Unable to load CRM agents",
+          error:
+            "Unable to load CRM agents.",
+          details: error.message,
+          code: error.code,
+          hint: error.hint || null
         });
       }
 
-      const agents = (data || []).map((agent) => ({
-        ...agent,
-        full_name: fullName(agent),
-      }));
+      const agents =
+        (data || []).map(
+          agent => ({
+            ...agent,
 
-      return res.status(200).json({
+            full_name:
+              [
+                agent.first_name,
+                agent.last_name
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .trim()
+          })
+        );
+
+      return send(res, 200, {
         ok: true,
+
         admin: {
           id: adminUser.id,
           email: adminUser.email,
           display_name:
-            adminUser.display_name || null,
-          role: adminUser.role,
+            adminUser.display_name,
+          role: adminUser.role
         },
+
         agents,
+
         pagination: {
           page,
           limit,
           total: count || 0,
           totalPages:
-            count && count > 0
-              ? Math.ceil(count / limit)
-              : 0,
-        },
-      });
-    } catch (error) {
-      console.error(
-        "Unexpected CRM GET error:",
-        error
-      );
-
-      return res.status(500).json({
-        ok: false,
-        error: "Unexpected server error",
+            count
+              ? Math.ceil(
+                  count / limit
+                )
+              : 0
+        }
       });
     }
-  }
 
-  // ======================================================
-  // CREATE CRM AGENT
-  // ======================================================
+    // ==================================================
+    // ADD AGENT
+    // ==================================================
 
-  if (req.method === "POST") {
-    try {
-      const body = req.body || {};
+    if (req.method === "POST") {
+      const body =
+        req.body || {};
 
       const firstName =
-        normalizeText(body.first_name);
+        clean(body.first_name);
 
       const lastName =
-        normalizeText(body.last_name);
+        clean(body.last_name);
 
       const email =
-        normalizeEmail(body.email);
+        clean(body.email)
+          .toLowerCase();
 
       const phone =
-        normalizeText(body.phone);
+        clean(body.phone);
 
-      const licenseNumber =
-        normalizeText(body.license_number);
-
-      const source =
-        normalizeText(body.source);
-
-      const status =
-        normalizeText(body.status) ||
-        "new_contact";
-
-      const notes =
-        normalizeText(body.notes);
-
-      const brokerageId =
-        normalizeText(body.brokerage_id);
-
-      let assignedUserId =
-        normalizeText(body.assigned_user_id);
-
-      // If requested, automatically assign the
-      // new CRM contact to the logged-in user.
       if (
-        body.assign_to_me === true ||
-        body.assign_to_me === "true"
+        !firstName &&
+        !lastName
       ) {
-        assignedUserId = adminUser.id;
-      }
-
-      if (!firstName && !lastName) {
-        return res.status(400).json({
+        return send(res, 400, {
           ok: false,
           error:
-            "First name or last name is required",
+            "Agent name is required."
         });
       }
 
       if (!email && !phone) {
-        return res.status(400).json({
+        return send(res, 400, {
           ok: false,
           error:
-            "Email or phone is required",
+            "Email or phone is required."
         });
       }
 
       if (email) {
         const {
           data: existing,
-          error: duplicateError,
+          error: duplicateError
         } = await supabase
           .from("crm_agents")
-          .select(`
-            id,
-            first_name,
-            last_name,
+          .select(
+            "id,first_name,last_name,email"
+          )
+          .eq(
+            "email",
             email
-          `)
-          .ilike("email", email)
+          )
           .maybeSingle();
 
         if (duplicateError) {
           console.error(
-            "Duplicate lookup failed:",
+            "Duplicate lookup error:",
             duplicateError
           );
-
-          return res.status(500).json({
-            ok: false,
-            error:
-              "Unable to verify CRM contact",
-          });
         }
 
         if (existing) {
-          return res.status(409).json({
+          return send(res, 409, {
             ok: false,
             error:
-              "A CRM agent with this email already exists",
-            existingAgent: existing,
+              "This email already exists in CRM.",
+            agent: existing
           });
         }
       }
 
-      const insertRow = {
-        first_name: firstName,
-        last_name: lastName,
-        email,
-        phone,
-        license_number: licenseNumber,
-        brokerage_id: brokerageId,
-        status,
-        source,
+      const newAgent = {
+        first_name:
+          firstName || null,
+
+        last_name:
+          lastName || null,
+
+        email:
+          email || null,
+
+        phone:
+          phone || null,
+
+        license_number:
+          clean(
+            body.license_number
+          ) || null,
+
+        brokerage_id:
+          clean(
+            body.brokerage_id
+          ) || null,
+
+        status:
+          clean(body.status) ||
+          "new_contact",
+
+        source:
+          clean(body.source) ||
+          null,
+
         assigned_user_id:
-          assignedUserId || null,
-        notes,
-        signed_up: false,
+          body.assign_to_me
+            ? adminUser.id
+            : (
+                clean(
+                  body.assigned_user_id
+                ) || null
+              ),
+
+        signed_up:
+          body.signed_up === true,
+
+        notes:
+          clean(body.notes) ||
+          null,
+
         is_active: true,
-        updated_at: new Date().toISOString(),
+
+        updated_at:
+          new Date().toISOString()
       };
 
       const {
         data,
-        error,
+        error
       } = await supabase
         .from("crm_agents")
-        .insert(insertRow)
-        .select()
+        .insert(newAgent)
+        .select("*")
         .single();
 
       if (error) {
         console.error(
-          "CRM agent insert failed:",
+          "CRM agent insert error:",
           error
         );
 
-        return res.status(500).json({
+        return send(res, 500, {
           ok: false,
-          error: "Unable to add CRM agent",
+          error:
+            "Unable to add CRM agent.",
+          details:
+            error.message
         });
       }
 
-      return res.status(201).json({
+      return send(res, 201, {
         ok: true,
-        agent: {
-          ...data,
-          full_name: fullName(data),
-        },
-      });
-    } catch (error) {
-      console.error(
-        "Unexpected CRM POST error:",
-        error
-      );
-
-      return res.status(500).json({
-        ok: false,
-        error: "Unexpected server error",
+        agent: data
       });
     }
-  }
 
-  // ======================================================
-  // UPDATE CRM AGENT
-  // ======================================================
+    // ==================================================
+    // UPDATE AGENT
+    // ==================================================
 
-  if (req.method === "PATCH") {
-    try {
-      const body = req.body || {};
-      const agentId =
-        normalizeText(body.id);
+    if (req.method === "PATCH") {
+      const body =
+        req.body || {};
 
-      if (!agentId) {
-        return res.status(400).json({
+      const id =
+        clean(body.id);
+
+      if (!id) {
+        return send(res, 400, {
           ok: false,
-          error: "CRM agent id is required",
+          error:
+            "CRM agent id is required."
         });
       }
 
-      const allowedFields = [
+      const allowed = [
         "first_name",
         "last_name",
         "email",
@@ -501,72 +500,26 @@ module.exports = async function handler(req, res) {
         "signed_up",
         "notes",
         "is_active",
-        "bluevera_agent_id",
+        "bluevera_agent_id"
       ];
 
       const updates = {};
 
-      for (const field of allowedFields) {
+      for (
+        const field of allowed
+      ) {
         if (
           Object.prototype.hasOwnProperty.call(
             body,
             field
           )
         ) {
-          updates[field] = body[field];
+          updates[field] =
+            body[field];
         }
       }
 
-      if (
-        Object.prototype.hasOwnProperty.call(
-          updates,
-          "email"
-        )
-      ) {
-        updates.email =
-          normalizeEmail(updates.email);
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          updates,
-          "first_name"
-        )
-      ) {
-        updates.first_name =
-          normalizeText(updates.first_name);
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          updates,
-          "last_name"
-        )
-      ) {
-        updates.last_name =
-          normalizeText(updates.last_name);
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          updates,
-          "phone"
-        )
-      ) {
-        updates.phone =
-          normalizeText(updates.phone);
-      }
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          body,
-          "assign_to_me"
-        ) &&
-        (
-          body.assign_to_me === true ||
-          body.assign_to_me === "true"
-        )
-      ) {
+      if (body.assign_to_me === true) {
         updates.assigned_user_id =
           adminUser.id;
       }
@@ -576,52 +529,64 @@ module.exports = async function handler(req, res) {
 
       const {
         data,
-        error,
+        error
       } = await supabase
         .from("crm_agents")
         .update(updates)
-        .eq("id", agentId)
-        .select()
+        .eq("id", id)
+        .select("*")
         .maybeSingle();
 
       if (error) {
         console.error(
-          "CRM agent update failed:",
+          "CRM agent update error:",
           error
         );
 
-        return res.status(500).json({
+        return send(res, 500, {
           ok: false,
           error:
-            "Unable to update CRM agent",
+            "Unable to update CRM agent.",
+          details:
+            error.message
         });
       }
 
       if (!data) {
-        return res.status(404).json({
+        return send(res, 404, {
           ok: false,
-          error: "CRM agent not found",
+          error:
+            "CRM agent not found."
         });
       }
 
-      return res.status(200).json({
+      return send(res, 200, {
         ok: true,
-        agent: {
-          ...data,
-          full_name: fullName(data),
-        },
-      });
-    } catch (error) {
-      console.error(
-        "Unexpected CRM PATCH error:",
-        error
-      );
-
-      return res.status(500).json({
-        ok: false,
-        error: "Unexpected server error",
+        agent: data
       });
     }
+
+    return send(res, 405, {
+      ok: false,
+      error:
+        "Method not allowed."
+    });
+
+  } catch (error) {
+    console.error(
+      "CRM API ERROR:",
+      error
+    );
+
+    return send(
+      res,
+      error.statusCode || 500,
+      {
+        ok: false,
+        error:
+          error.message ||
+          "Unexpected CRM error."
+      }
+    );
   }
 };
-
