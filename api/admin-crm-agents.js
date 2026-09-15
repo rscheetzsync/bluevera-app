@@ -1,146 +1,156 @@
 const { createClient } = require("@supabase/supabase-js");
 
-const SUPABASE_URL =
-  process.env.SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-const SERVICE_ROLE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SERVICE_KEY ||
-  process.env.SUPABASE_SECRET_KEY;
-
-const supabase = createClient(
-  SUPABASE_URL || "",
-  SERVICE_ROLE_KEY || "",
-  {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false
-    }
-  }
-);
-
 function send(res, status, body) {
   return res.status(status).json(body);
 }
 
-function bearerToken(req) {
-  const header = String(
-    req.headers.authorization || ""
-  );
+function getBearerToken(req) {
+  const header = String(req.headers.authorization || "");
 
-  if (!header.toLowerCase().startsWith("bearer ")) {
+  if (!/^Bearer\s+/i.test(header)) {
     return "";
   }
 
-  return header.slice(7).trim();
-}
-
-async function requireAdmin(req) {
-  const token = bearerToken(req);
-
-  if (!token) {
-    throw Object.assign(
-      new Error("Missing admin token."),
-      { statusCode: 401 }
-    );
-  }
-
-  const {
-    data: authData,
-    error: authError
-  } = await supabase.auth.getUser(token);
-
-  if (
-    authError ||
-    !authData?.user
-  ) {
-    throw Object.assign(
-      new Error("Invalid or expired admin session."),
-      { statusCode: 401 }
-    );
-  }
-
-  const user = authData.user;
-
-  const {
-    data: adminUser,
-    error: adminError
-  } = await supabase
-    .from("admin_users")
-    .select(
-      "id,email,role,is_active,display_name,default_page"
-    )
-    .eq(
-      "email",
-      String(user.email || "").toLowerCase()
-    )
-    .maybeSingle();
-
-  if (adminError) {
-    console.error(
-      "Admin lookup failed:",
-      adminError
-    );
-
-    throw Object.assign(
-      new Error("Unable to verify admin account."),
-      { statusCode: 500 }
-    );
-  }
-
-  if (!adminUser) {
-    throw Object.assign(
-      new Error("Admin access required."),
-      { statusCode: 403 }
-    );
-  }
-
-  if (adminUser.is_active === false) {
-    throw Object.assign(
-      new Error("Admin account is disabled."),
-      { statusCode: 403 }
-    );
-  }
-
-  return adminUser;
+  return header.replace(/^Bearer\s+/i, "").trim();
 }
 
 function clean(value) {
-  if (
-    value === undefined ||
-    value === null
-  ) {
+  if (value === undefined || value === null) {
     return "";
   }
 
   return String(value).trim();
 }
 
-module.exports = async function handler(
-  req,
-  res
-) {
-  res.setHeader(
-    "Cache-Control",
-    "no-store"
-  );
-
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return send(res, 500, {
-      ok: false,
-      error:
-        "CRM API is missing Supabase environment variables."
-    });
-  }
+module.exports = async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
 
   try {
-    const adminUser =
-      await requireAdmin(req);
+    // =====================================================
+    // LOAD ENVIRONMENT VARIABLES INSIDE THE FUNCTION
+    // =====================================================
 
-    // ==================================================
-    // GET AGENTS
-    // ==================================================
+    const supabaseUrl =
+      process.env.SUPABASE_URL ||
+      process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+    const serviceRoleKey =
+      process.env.SUPABASE_SERVICE_ROLE_KEY ||
+      process.env.SUPABASE_SERVICE_KEY ||
+      process.env.SUPABASE_SECRET_KEY;
+
+    if (!supabaseUrl) {
+      return send(res, 500, {
+        ok: false,
+        error: "SUPABASE_URL is missing."
+      });
+    }
+
+    if (!serviceRoleKey) {
+      return send(res, 500, {
+        ok: false,
+        error: "Supabase service role key is missing."
+      });
+    }
+
+    // =====================================================
+    // CREATE SUPABASE CLIENT
+    // =====================================================
+
+    const supabase = createClient(
+      supabaseUrl,
+      serviceRoleKey,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false
+        }
+      }
+    );
+
+    // =====================================================
+    // VERIFY ADMIN SESSION
+    // =====================================================
+
+    const token = getBearerToken(req);
+
+    if (!token) {
+      return send(res, 401, {
+        ok: false,
+        error: "Missing admin authentication token."
+      });
+    }
+
+    const {
+      data: authData,
+      error: authError
+    } = await supabase.auth.getUser(token);
+
+    if (authError || !authData?.user) {
+      console.error(
+        "Admin authentication failed:",
+        authError
+      );
+
+      return send(res, 401, {
+        ok: false,
+        error: "Invalid or expired admin session."
+      });
+    }
+
+    const authUser = authData.user;
+
+    // =====================================================
+    // VERIFY ADMIN_USERS RECORD
+    // =====================================================
+
+    const {
+      data: adminUser,
+      error: adminError
+    } = await supabase
+      .from("admin_users")
+      .select(
+        "id,email,role,is_active,display_name,default_page"
+      )
+      .eq(
+        "email",
+        String(authUser.email || "")
+          .trim()
+          .toLowerCase()
+      )
+      .maybeSingle();
+
+    if (adminError) {
+      console.error(
+        "admin_users lookup failed:",
+        adminError
+      );
+
+      return send(res, 500, {
+        ok: false,
+        error: "Unable to verify admin account.",
+        details: adminError.message,
+        code: adminError.code
+      });
+    }
+
+    if (!adminUser) {
+      return send(res, 403, {
+        ok: false,
+        error: "Admin account not found."
+      });
+    }
+
+    if (adminUser.is_active === false) {
+      return send(res, 403, {
+        ok: false,
+        error: "Admin account is disabled."
+      });
+    }
+
+    // =====================================================
+    // GET CRM AGENTS
+    // =====================================================
 
     if (req.method === "GET") {
       const owner =
@@ -154,17 +164,20 @@ module.exports = async function handler(
 
       const page =
         Math.max(
-          parseInt(req.query.page || "1", 10),
+          Number.parseInt(
+            req.query.page || "1",
+            10
+          ) || 1,
           1
         );
 
       const limit =
         Math.min(
           Math.max(
-            parseInt(
+            Number.parseInt(
               req.query.limit || "50",
               10
-            ),
+            ) || 50,
             1
           ),
           100
@@ -183,10 +196,7 @@ module.exports = async function handler(
         })
         .eq("is_active", true);
 
-      // ------------------------------------------
       // OWNER FILTER
-      // ------------------------------------------
-
       if (owner === "mine") {
         query = query.eq(
           "assigned_user_id",
@@ -201,10 +211,7 @@ module.exports = async function handler(
         );
       }
 
-      // ------------------------------------------
       // STATUS FILTER
-      // ------------------------------------------
-
       if (
         status &&
         status !== "all"
@@ -215,10 +222,7 @@ module.exports = async function handler(
         );
       }
 
-      // ------------------------------------------
       // SEARCH
-      // ------------------------------------------
-
       if (search) {
         const safeSearch =
           search
@@ -238,8 +242,8 @@ module.exports = async function handler(
       }
 
       const {
-        data,
-        error,
+        data: agents,
+        error: agentsError,
         count
       } = await query
         .order(
@@ -252,24 +256,23 @@ module.exports = async function handler(
         )
         .range(from, to);
 
-      if (error) {
+      if (agentsError) {
         console.error(
-          "CRM AGENTS SUPABASE ERROR:",
-          error
+          "crm_agents query failed:",
+          agentsError
         );
 
         return send(res, 500, {
           ok: false,
-          error:
-            "Unable to load CRM agents.",
-          details: error.message,
-          code: error.code,
-          hint: error.hint || null
+          error: "Unable to load CRM agents.",
+          details: agentsError.message,
+          code: agentsError.code,
+          hint: agentsError.hint || null
         });
       }
 
-      const agents =
-        (data || []).map(
+      const formattedAgents =
+        (agents || []).map(
           agent => ({
             ...agent,
 
@@ -291,16 +294,17 @@ module.exports = async function handler(
           id: adminUser.id,
           email: adminUser.email,
           display_name:
-            adminUser.display_name,
+            adminUser.display_name || null,
           role: adminUser.role
         },
 
-        agents,
+        agents: formattedAgents,
 
         pagination: {
           page,
           limit,
           total: count || 0,
+
           totalPages:
             count
               ? Math.ceil(
@@ -311,13 +315,12 @@ module.exports = async function handler(
       });
     }
 
-    // ==================================================
-    // ADD AGENT
-    // ==================================================
+    // =====================================================
+    // POST - ADD CRM AGENT
+    // =====================================================
 
     if (req.method === "POST") {
-      const body =
-        req.body || {};
+      const body = req.body || {};
 
       const firstName =
         clean(body.first_name);
@@ -338,8 +341,7 @@ module.exports = async function handler(
       ) {
         return send(res, 400, {
           ok: false,
-          error:
-            "Agent name is required."
+          error: "Agent name is required."
         });
       }
 
@@ -354,23 +356,31 @@ module.exports = async function handler(
       if (email) {
         const {
           data: existing,
-          error: duplicateError
+          error: existingError
         } = await supabase
           .from("crm_agents")
           .select(
             "id,first_name,last_name,email"
           )
-          .eq(
+          .ilike(
             "email",
             email
           )
           .maybeSingle();
 
-        if (duplicateError) {
+        if (existingError) {
           console.error(
-            "Duplicate lookup error:",
-            duplicateError
+            "Duplicate check failed:",
+            existingError
           );
+
+          return send(res, 500, {
+            ok: false,
+            error:
+              "Unable to check CRM duplicate.",
+            details:
+              existingError.message
+          });
         }
 
         if (existing) {
@@ -407,15 +417,17 @@ module.exports = async function handler(
           ) || null,
 
         status:
-          clean(body.status) ||
-          "new_contact",
+          clean(
+            body.status
+          ) || "new_contact",
 
         source:
-          clean(body.source) ||
-          null,
+          clean(
+            body.source
+          ) || null,
 
         assigned_user_id:
-          body.assign_to_me
+          body.assign_to_me === true
             ? adminUser.id
             : (
                 clean(
@@ -427,8 +439,9 @@ module.exports = async function handler(
           body.signed_up === true,
 
         notes:
-          clean(body.notes) ||
-          null,
+          clean(
+            body.notes
+          ) || null,
 
         is_active: true,
 
@@ -447,7 +460,7 @@ module.exports = async function handler(
 
       if (error) {
         console.error(
-          "CRM agent insert error:",
+          "CRM insert failed:",
           error
         );
 
@@ -466,9 +479,9 @@ module.exports = async function handler(
       });
     }
 
-    // ==================================================
-    // UPDATE AGENT
-    // ==================================================
+    // =====================================================
+    // PATCH - UPDATE CRM AGENT
+    // =====================================================
 
     if (req.method === "PATCH") {
       const body =
@@ -485,7 +498,7 @@ module.exports = async function handler(
         });
       }
 
-      const allowed = [
+      const allowedFields = [
         "first_name",
         "last_name",
         "email",
@@ -506,20 +519,23 @@ module.exports = async function handler(
       const updates = {};
 
       for (
-        const field of allowed
+        const field of allowedFields
       ) {
         if (
-          Object.prototype.hasOwnProperty.call(
-            body,
-            field
-          )
+          Object.prototype
+            .hasOwnProperty.call(
+              body,
+              field
+            )
         ) {
           updates[field] =
             body[field];
         }
       }
 
-      if (body.assign_to_me === true) {
+      if (
+        body.assign_to_me === true
+      ) {
         updates.assigned_user_id =
           adminUser.id;
       }
@@ -539,7 +555,7 @@ module.exports = async function handler(
 
       if (error) {
         console.error(
-          "CRM agent update error:",
+          "CRM update failed:",
           error
         );
 
@@ -568,25 +584,20 @@ module.exports = async function handler(
 
     return send(res, 405, {
       ok: false,
-      error:
-        "Method not allowed."
+      error: "Method not allowed."
     });
 
   } catch (error) {
     console.error(
-      "CRM API ERROR:",
+      "admin-crm-agents fatal error:",
       error
     );
 
-    return send(
-      res,
-      error.statusCode || 500,
-      {
-        ok: false,
-        error:
-          error.message ||
-          "Unexpected CRM error."
-      }
-    );
+    return send(res, 500, {
+      ok: false,
+      error:
+        error?.message ||
+        "Unexpected CRM API error."
+    });
   }
 };
