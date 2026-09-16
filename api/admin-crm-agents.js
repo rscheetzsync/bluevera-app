@@ -1,6 +1,6 @@
 // api/admin-crm-agents.js
 // BlueVera CRM Agents API
-// Uses native fetch - NO @supabase/supabase-js package required.
+// Native fetch only - no @supabase/supabase-js dependency.
 
 function send(res, status, body) {
   return res.status(status).json(body);
@@ -64,7 +64,7 @@ module.exports = async function handler(req, res) {
     }
 
     // =====================================================
-    // VERIFY LOGGED-IN ADMIN
+    // VERIFY ADMIN SESSION
     // =====================================================
 
     const token = bearerToken(req);
@@ -80,7 +80,6 @@ module.exports = async function handler(req, res) {
       `${supabaseUrl}/auth/v1/user`,
       {
         method: "GET",
-
         headers: {
           apikey: serviceRoleKey,
           Authorization: `Bearer ${token}`
@@ -128,7 +127,6 @@ module.exports = async function handler(req, res) {
       `${supabaseUrl}/rest/v1/admin_users?${adminParams.toString()}`,
       {
         method: "GET",
-
         headers: {
           apikey: serviceRoleKey,
           Authorization: `Bearer ${serviceRoleKey}`,
@@ -191,7 +189,10 @@ module.exports = async function handler(req, res) {
 
       const page =
         Math.max(
-          parseInt(req.query.page || "1", 10) || 1,
+          parseInt(
+            req.query.page || "1",
+            10
+          ) || 1,
           1
         );
 
@@ -257,7 +258,7 @@ module.exports = async function handler(req, res) {
         );
       }
 
-      // SEARCH FILTER
+      // SEARCH
       if (search) {
         const safeSearch =
           search
@@ -276,6 +277,7 @@ module.exports = async function handler(req, res) {
             `last_name.ilike.${pattern}`,
             `email.ilike.${pattern}`,
             `phone.ilike.${pattern}`,
+            `brokerage.ilike.${pattern}`,
             `source.ilike.${pattern}`,
             `notes.ilike.${pattern}`
           ].join(",")
@@ -287,15 +289,12 @@ module.exports = async function handler(req, res) {
           `${supabaseUrl}/rest/v1/crm_agents?${params.toString()}`,
           {
             method: "GET",
-
             headers: {
               apikey: serviceRoleKey,
               Authorization:
                 `Bearer ${serviceRoleKey}`,
-
               Prefer:
                 "count=exact",
-
               Accept:
                 "application/json"
             }
@@ -423,7 +422,7 @@ module.exports = async function handler(req, res) {
           body.last_name
         );
 
-      const email =
+      const contactEmail =
         clean(
           body.email
         ).toLowerCase();
@@ -445,7 +444,7 @@ module.exports = async function handler(req, res) {
       }
 
       if (
-        !email &&
+        !contactEmail &&
         !phone
       ) {
         return send(res, 400, {
@@ -456,11 +455,11 @@ module.exports = async function handler(req, res) {
       }
 
       // DUPLICATE EMAIL CHECK
-      if (email) {
+      if (contactEmail) {
         const duplicateParams =
           new URLSearchParams({
             email:
-              `eq.${email}`,
+              `eq.${contactEmail}`,
 
             select:
               "id,first_name,last_name,email",
@@ -514,10 +513,15 @@ module.exports = async function handler(req, res) {
           lastName || null,
 
         email:
-          email || null,
+          contactEmail || null,
 
         phone:
           phone || null,
+
+        brokerage:
+          clean(
+            body.brokerage
+          ) || null,
 
         license_number:
           clean(
@@ -599,7 +603,7 @@ module.exports = async function handler(req, res) {
 
       if (!insertResponse.ok) {
         console.error(
-          "CRM insert failed:",
+          "CRM agent insert failed:",
           inserted
         );
 
@@ -647,6 +651,7 @@ module.exports = async function handler(req, res) {
         "last_name",
         "email",
         "phone",
+        "brokerage",
         "license_number",
         "brokerage_id",
         "status",
