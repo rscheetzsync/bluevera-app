@@ -1,0 +1,7 @@
+# ============================================================
+# BlueVera App - Private / Operational Application
+# Block search engines and AI crawlers from indexing/crawling.
+# ============================================================
+
+User-agent: *
+Disallow: /
