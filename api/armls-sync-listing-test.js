@@ -527,7 +527,7 @@ function extractUpdates(
    IMPORTANT:
    - This scanner is deterministic.
    - These are listing-reported signals, normally without a year.
-   - Structured ARMLS dated updates always take priority.
+   - Structured ARMLS updates and public-remark signals are stored independently.
 ============================================================ */
 
 const PUBLIC_REMARK_RULES = [
@@ -800,8 +800,7 @@ function findGroupedImprovementMatch(
 }
 
 function scanPublicRemarks(
-  publicRemarks,
-  structuredUpdates = {}
+  publicRemarks
 ) {
   const remarks =
     clean(publicRemarks);
@@ -816,15 +815,6 @@ function scanPublicRemarks(
     const rule
     of PUBLIC_REMARK_RULES
   ) {
-    if (
-      Object.prototype.hasOwnProperty.call(
-        structuredUpdates,
-        rule.systemType
-      )
-    ) {
-      continue;
-    }
-
     let matchedText =
       findGroupedImprovementMatch(
         remarks,
@@ -1068,6 +1058,9 @@ function extractApn(
 async function findPropertyByApn(
   apn
 ) {
+  const raw =
+    clean(apn);
+
   const normalized =
     normalizeApn(apn);
 
@@ -1075,44 +1068,50 @@ async function findPropertyByApn(
     return null;
   }
 
-  const rows =
-    await supabaseRequest(
-      "properties" +
-      "?select=*" +
-      "&apn=not.is.null" +
-      "&limit=5000",
-      {
-        method:
-          "GET"
-      }
-    );
+  const candidates =
+    new Set([
+      raw,
+      normalized
+    ].filter(Boolean));
 
-  if (
-    !Array.isArray(rows)
-  ) {
-    return null;
+  if (/^\d{8}$/.test(normalized)) {
+    candidates.add(
+      `${normalized.slice(0, 3)}-${normalized.slice(3, 5)}-${normalized.slice(5)}`
+    );
   }
 
-  return (
-    rows.find(row =>
-      normalizeApn(
-        row.apn
-      ) ===
-      normalized
-    ) ||
-    null
-  );
+  for (const candidate of candidates) {
+    const rows =
+      await supabaseRequest(
+        "properties" +
+        "?select=*" +
+        "&apn=eq." +
+        encodeURIComponent(candidate) +
+        "&limit=2",
+        {
+          method:
+            "GET"
+        }
+      );
+
+    if (
+      Array.isArray(rows) &&
+      rows[0]
+    ) {
+      return rows[0];
+    }
+  }
+
+  return null;
 }
 
 async function findPropertyByAddress(
   fullAddress
 ) {
-  const normalized =
-    normalizeAddress(
-      fullAddress
-    );
+  const raw =
+    clean(fullAddress);
 
-  if (!normalized) {
+  if (!raw) {
     return null;
   }
 
@@ -1120,35 +1119,19 @@ async function findPropertyByAddress(
     await supabaseRequest(
       "properties" +
       "?select=*" +
-      "&limit=5000",
+      "&full_address=eq." +
+      encodeURIComponent(raw) +
+      "&limit=2",
       {
         method:
           "GET"
       }
     );
 
-  if (
-    !Array.isArray(rows)
-  ) {
-    return null;
-  }
-
   return (
-    rows.find(row => {
-      const candidate =
-        row.full_address ||
-        row.address ||
-        row.street ||
-        "";
-
-      return (
-        normalizeAddress(
-          candidate
-        ) ===
-        normalized
-      );
-    }) ||
-    null
+    Array.isArray(rows)
+      ? rows[0] || null
+      : null
   );
 }
 
@@ -1402,9 +1385,6 @@ async function savePropertyListing({
     });
 
   const payload = {
-    property_id:
-      propertyId,
-
     source_type:
       "armls",
 
@@ -1437,6 +1417,17 @@ async function savePropertyListing({
   };
 
   if (existing) {
+    if (
+      existing.property_id &&
+      propertyId &&
+      String(existing.property_id) !==
+      String(propertyId)
+    ) {
+      throw new Error(
+        `Listing ${mlsNumber} is already linked to property ${existing.property_id}; refusing to reassign it to ${propertyId}`
+      );
+    }
+
     const rows =
       await supabaseRequest(
         "property_listings" +
@@ -1487,6 +1478,9 @@ async function savePropertyListing({
           JSON.stringify({
             id:
               randomUuid(),
+
+            property_id:
+              propertyId,
 
             ...payload,
 
@@ -1872,8 +1866,7 @@ export default async function handler(
 
     const remarkSignals =
       scanPublicRemarks(
-        publicRemarks,
-        updates
+        publicRemarks
       );
 
 
@@ -2216,7 +2209,7 @@ export default async function handler(
             true,
 
           structuredUpdateWinsOverRemarks:
-            true
+            false
         }
       });
   } catch (error) {
@@ -2239,4 +2232,3 @@ export default async function handler(
       });
   }
 }
-
