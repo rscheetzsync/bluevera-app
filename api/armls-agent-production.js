@@ -21,7 +21,8 @@ function escapeODataString(value) {
 }
 
 function safeInt(value, fallback, min, max) {
-  const parsed = Number(value);
+  const parsed =
+    Number(value);
 
   if (!Number.isInteger(parsed)) {
     return fallback;
@@ -184,11 +185,6 @@ async function fetchLegacyAccount(
       account?.LastName ??
       null,
 
-    email:
-      account?.Email ??
-      account?.PrimaryEmail ??
-      null,
-
     active:
       account?.Active === true,
 
@@ -205,6 +201,7 @@ async function fetchLegacyAccount(
     officeName:
       account?.OfficeName ??
       account?.Office?.Name ??
+      account?.Office?.OfficeName ??
       null,
 
     userType:
@@ -422,7 +419,7 @@ export default async function handler(
 
     /* ==========================================================
        MODE 1:
-       RESOLVE AGENT ACCOUNTS + PHOENIX REALTORS ASSOCIATION
+       RESOLVE AGENT NAME / BROKERAGE / ASSOCIATION
     ========================================================== */
 
     if (
@@ -503,7 +500,7 @@ export default async function handler(
             true,
 
           mode:
-            "ARMLS_AGENT_ACCOUNT_ASSOCIATION_BATCH",
+            "ARMLS_AGENT_NAME_BROKERAGE_ASSOCIATION_BATCH",
 
           count:
             accounts.length,
@@ -511,7 +508,7 @@ export default async function handler(
           accounts,
 
           note:
-            "Read-only account and association lookup."
+            "Read-only account and association lookup. No email data is returned."
         });
     }
 
@@ -519,6 +516,9 @@ export default async function handler(
     /* ==========================================================
        MODE 2:
        PAGE THROUGH CLOSED LISTINGS
+
+       Only primary ListAgentId and BuyerAgentId are counted.
+       Co-list and co-buyer agents are intentionally excluded.
     ========================================================== */
 
     const startDate =
@@ -576,11 +576,29 @@ export default async function handler(
       `StandardStatus Eq 'Closed' ` +
       `And CloseDate bt ${start},${end}`;
 
+    /*
+      Keep the listing response as small as possible.
+
+      If Spark ignores _select, the endpoint still works because
+      we only return the few fields BlueVera needs below.
+    */
+
+    const select =
+      [
+        "ListingId",
+        "ListingKey",
+        "StandardStatus",
+        "CloseDate",
+        "ListAgentId",
+        "BuyerAgentId"
+      ].join(",");
+
     const url =
       `${SPARK_BASE}/listings` +
       `?_filter=${encodeURIComponent(filter)}` +
       `&_limit=${limit}` +
-      `&_page=${page}`;
+      `&_page=${page}` +
+      `&_select=${encodeURIComponent(select)}`;
 
     const data =
       await fetchJson(
@@ -618,12 +636,6 @@ export default async function handler(
               ) ||
               null,
 
-            status:
-              clean(
-                fields?.StandardStatus
-              ) ||
-              null,
-
             closeDate:
               fields?.CloseDate ||
               null,
@@ -638,18 +650,6 @@ export default async function handler(
               clean(
                 fields?.BuyerAgentId
               ) ||
-              null,
-
-            listOfficeId:
-              clean(
-                fields?.ListOfficeId
-              ) ||
-              null,
-
-            buyerOfficeId:
-              clean(
-                fields?.BuyerOfficeId
-              ) ||
               null
           };
         }
@@ -662,7 +662,7 @@ export default async function handler(
           true,
 
         mode:
-          "ARMLS_AGENT_PRODUCTION_LISTING_PAGE",
+          "ARMLS_TOP_PRODUCER_LISTING_PAGE",
 
         startDate,
         endDate,
@@ -678,12 +678,12 @@ export default async function handler(
         listings,
 
         note:
-          "Read-only ARMLS production scan. No Supabase records were created or changed."
+          "Read-only ARMLS top-producer scan. No Supabase records were created or changed."
       });
 
   } catch (error) {
     console.error(
-      "ARMLS agent production failed:",
+      "ARMLS top producer scan failed:",
       error
     );
 
@@ -695,7 +695,7 @@ export default async function handler(
 
         error:
           error?.message ||
-          "ARMLS agent production failed."
+          "ARMLS top producer scan failed."
       });
   }
 }
