@@ -10,19 +10,8 @@ function clean(value) {
     .trim();
 }
 
-function escapeSparkString(value) {
-  return clean(value)
-    .replace(/'/g, "''");
-}
-
-function escapeODataString(value) {
-  return clean(value)
-    .replace(/'/g, "''");
-}
-
 function safeInt(value, fallback, min, max) {
-  const parsed =
-    Number(value);
+  const parsed = Number(value);
 
   if (!Number.isInteger(parsed)) {
     return fallback;
@@ -48,25 +37,24 @@ function endTimestamp(date) {
   return `${date}T23:59:59Z`;
 }
 
-async function fetchJson(
-  url,
-  token
-) {
-  const response =
-    await fetch(
-      url,
-      {
-        method: "GET",
+function escapeSparkString(value) {
+  return clean(value)
+    .replace(/'/g, "''");
+}
 
-        headers: {
-          Authorization:
-            `Bearer ${token}`,
-
-          Accept:
-            "application/json"
-        }
+async function fetchJson(url, token) {
+  const response = await fetch(
+    url,
+    {
+      method: "GET",
+      headers: {
+        Authorization:
+          `Bearer ${token}`,
+        Accept:
+          "application/json"
       }
-    );
+    }
+  );
 
   const text =
     await response.text();
@@ -94,18 +82,6 @@ async function fetchJson(
   }
 
   return data;
-}
-
-function sparkResults(data) {
-  return Array.isArray(
-    data?.D?.Results
-  )
-    ? data.D.Results
-    : Array.isArray(
-        data?.Results
-      )
-      ? data.Results
-      : [];
 }
 
 function odataResults(data) {
@@ -136,229 +112,125 @@ function associationNames(member) {
     .filter(Boolean);
 }
 
-async function fetchLegacyAccount(
-  agentId,
-  token
-) {
-  const safeAgentId =
-    escapeSparkString(
-      agentId
-    );
-
-  const filter =
-    `UserType Eq 'Member' And Id Eq '${safeAgentId}'`;
-
-  const url =
-    `${SPARK_BASE}/accounts` +
-    `?_filter=${encodeURIComponent(filter)}` +
-    `&_limit=1`;
-
-  const data =
-    await fetchJson(
-      url,
-      token
-    );
-
-  const account =
-    sparkResults(
-      data
-    )[0];
-
-  if (!account) {
-    return null;
-  }
-
-  return {
-    id:
-      account?.Id ??
-      agentId,
-
-    shortId:
-      account?.ShortId ??
-      null,
-
-    firstName:
-      account?.FirstName ??
-      null,
-
-    lastName:
-      account?.LastName ??
-      null,
-
-    active:
-      account?.Active === true,
-
-    officeId:
-      account?.OfficeId ??
-      account?.Office?.Id ??
-      null,
-
-    officeShortId:
-      account?.OfficeShortId ??
-      account?.Office?.ShortId ??
-      null,
-
-    officeName:
-      account?.OfficeName ??
-      account?.Office?.Name ??
-      account?.Office?.OfficeName ??
-      null,
-
-    userType:
-      account?.UserType ??
-      null
-  };
-}
-
-async function fetchResoMemberByShortId(
-  shortId,
-  token
-) {
-  const safeShortId =
-    escapeODataString(
-      shortId
-    );
-
-  if (!safeShortId) {
-    return null;
-  }
-
-  const params =
-    new URLSearchParams();
-
-  params.set(
-    "$filter",
-    `MemberMlsId eq '${safeShortId}'`
-  );
-
-  params.set(
-    "$top",
-    "1"
-  );
-
-  params.set(
-    "$expand",
-    "Association"
-  );
-
-  const url =
-    `${RESO_BASE}/Member?${params.toString()}`;
-
-  const data =
-    await fetchJson(
-      url,
-      token
-    );
-
-  const member =
-    odataResults(
-      data
-    )[0];
-
-  if (!member) {
-    return null;
-  }
-
-  return {
-    memberKey:
-      member?.MemberKey ??
-      null,
-
-    memberMlsId:
-      member?.MemberMlsId ??
-      shortId,
-
-    status:
-      member?.MemberStatus ??
-      null,
-
-    associations:
-      associationNames(
-        member
-      )
-  };
-}
-
-async function resolveAgent(
-  agentId,
-  token
-) {
-  const account =
-    await fetchLegacyAccount(
-      agentId,
-      token
-    );
-
-  if (!account) {
-    return {
-      id:
-        agentId,
-
-      found:
-        false,
-
-      associations:
-        [],
-
-      phoenixRealtors:
-        false
-    };
-  }
-
-  let resoMember =
-    null;
-
-  if (
-    account.shortId
-  ) {
-    try {
-      resoMember =
-        await fetchResoMemberByShortId(
-          account.shortId,
-          token
-        );
-    } catch (error) {
-      console.warn(
-        "RESO association lookup failed for",
-        account.shortId,
-        error?.message
-      );
-    }
-  }
-
-  const associations =
-    Array.isArray(
-      resoMember?.associations
-    )
-      ? resoMember.associations
-      : [];
-
-  const phoenixRealtors =
-    associations.some(
+function isPhoenixRealtor(member) {
+  return associationNames(member)
+    .some(
       name =>
-        clean(name)
-          .toUpperCase() ===
+        name.toUpperCase() ===
         "PHOENIX REALTORS"
     );
+}
 
-  return {
-    ...account,
+function sparkCount(data) {
+  const total =
+    data?.D?.Pagination?.TotalRows ??
+    data?.Pagination?.TotalRows ??
+    0;
 
-    found:
-      true,
+  const parsed =
+    Number(total);
 
-    memberKey:
-      resoMember?.memberKey ??
-      null,
+  return Number.isFinite(parsed)
+    ? parsed
+    : 0;
+}
 
-    memberStatus:
-      resoMember?.status ??
-      null,
+async function countClosedTransactions({
+  memberKey,
+  startDate,
+  endDate,
+  token
+}) {
+  const safeKey =
+    escapeSparkString(
+      memberKey
+    );
 
-    associations,
+  const start =
+    startTimestamp(
+      startDate
+    );
 
-    phoenixRealtors
-  };
+  const end =
+    endTimestamp(
+      endDate
+    );
+
+  /*
+    Count each CLOSED MLS listing once when this member is either
+    the primary list agent OR the primary buyer agent.
+
+    Co-list and co-buyer agents are intentionally excluded.
+
+    _pagination=count returns only the number of matching rows,
+    not the listing records themselves.
+  */
+
+  const filter =
+    `StandardStatus Eq 'Closed' ` +
+    `And CloseDate bt ${start},${end} ` +
+    `And (ListAgentId Eq '${safeKey}' Or BuyerAgentId Eq '${safeKey}')`;
+
+  const url =
+    `${SPARK_BASE}/listings` +
+    `?_filter=${encodeURIComponent(filter)}` +
+    `&_pagination=count` +
+    `&_limit=0`;
+
+  const data =
+    await fetchJson(
+      url,
+      token
+    );
+
+  return sparkCount(
+    data
+  );
+}
+
+async function fetchOfficeName(
+  officeKey,
+  token
+) {
+  const key =
+    clean(
+      officeKey
+    );
+
+  if (!key) {
+    return null;
+  }
+
+  const url =
+    `${RESO_BASE}/Office('${encodeURIComponent(key)}')` +
+    `?$select=OfficeKey,OfficeName,OfficeMlsId`;
+
+  try {
+    const data =
+      await fetchJson(
+        url,
+        token
+      );
+
+    return {
+      officeKey:
+        data?.OfficeKey ??
+        key,
+
+      officeName:
+        data?.OfficeName ??
+        data?.OfficeMlsId ??
+        null
+    };
+  } catch {
+    return {
+      officeKey:
+        key,
+
+      officeName:
+        null
+    };
+  }
 }
 
 export default async function handler(
@@ -413,18 +285,262 @@ export default async function handler(
     const mode =
       clean(
         req.query?.mode ||
-        "listings"
+        "member-count"
       ).toLowerCase();
 
 
     /* ==========================================================
        MODE 1:
-       RESOLVE AGENT NAME / BROKERAGE / ASSOCIATION
+       GET TOTAL VISIBLE ARMLS MEMBER COUNT
+
+       The browser uses this only to choose random page offsets.
     ========================================================== */
 
     if (
-      mode === "accounts"
+      mode === "member-count"
     ) {
+      const params =
+        new URLSearchParams();
+
+      params.set(
+        "$top",
+        "1"
+      );
+
+      params.set(
+        "$count",
+        "true"
+      );
+
+      params.set(
+        "$select",
+        "MemberKey"
+      );
+
+      const url =
+        `${RESO_BASE}/Member?${params.toString()}`;
+
+      const data =
+        await fetchJson(
+          url,
+          token
+        );
+
+      const totalMembers =
+        Number(
+          data?.["@odata.count"] ??
+          0
+        );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          mode:
+            "ARMLS_MEMBER_COUNT",
+
+          totalMembers:
+            Number.isFinite(totalMembers)
+              ? totalMembers
+              : 0
+        });
+    }
+
+
+    /* ==========================================================
+       MODE 2:
+       RETURN ONE RANDOMIZABLE MEMBER PAGE,
+       FILTERED LOCALLY TO PHOENIX REALTORS.
+
+       The browser supplies a random $skip value.
+    ========================================================== */
+
+    if (
+      mode === "member-page"
+    ) {
+      const skip =
+        safeInt(
+          req.query?.skip,
+          0,
+          0,
+          2500000
+        );
+
+      const top =
+        safeInt(
+          req.query?.top,
+          500,
+          1,
+          1000
+        );
+
+      const params =
+        new URLSearchParams();
+
+      params.set(
+        "$top",
+        String(top)
+      );
+
+      params.set(
+        "$skip",
+        String(skip)
+      );
+
+      params.set(
+        "$select",
+        [
+          "MemberKey",
+          "MemberMlsId",
+          "MemberFirstName",
+          "MemberLastName",
+          "MemberFullName",
+          "MemberStatus",
+          "OfficeKey",
+          "OfficeMlsId"
+        ].join(",")
+      );
+
+      params.set(
+        "$expand",
+        "Association"
+      );
+
+      const url =
+        `${RESO_BASE}/Member?${params.toString()}`;
+
+      const data =
+        await fetchJson(
+          url,
+          token
+        );
+
+      const allMembers =
+        odataResults(
+          data
+        );
+
+      const members =
+        allMembers
+          .filter(
+            member =>
+              isPhoenixRealtor(
+                member
+              )
+          )
+          .map(
+            member => ({
+              memberKey:
+                member?.MemberKey ??
+                null,
+
+              memberMlsId:
+                member?.MemberMlsId ??
+                null,
+
+              firstName:
+                member?.MemberFirstName ??
+                null,
+
+              lastName:
+                member?.MemberLastName ??
+                null,
+
+              fullName:
+                member?.MemberFullName ??
+                [
+                  member?.MemberFirstName,
+                  member?.MemberLastName
+                ]
+                  .filter(Boolean)
+                  .join(" ") ||
+                null,
+
+              status:
+                member?.MemberStatus ??
+                null,
+
+              officeKey:
+                member?.OfficeKey ??
+                null,
+
+              officeMlsId:
+                member?.OfficeMlsId ??
+                null,
+
+              association:
+                "Phoenix REALTORS"
+            })
+          )
+          .filter(
+            member =>
+              Boolean(
+                member.memberKey
+              )
+          );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          mode:
+            "PHOENIX_REALTORS_RANDOM_PAGE",
+
+          skip,
+          requested:
+            top,
+
+          scanned:
+            allMembers.length,
+
+          phoenixCount:
+            members.length,
+
+          members
+        });
+    }
+
+
+    /* ==========================================================
+       MODE 3:
+       CHECK PRODUCTION FOR A SMALL BATCH OF MEMBERS.
+
+       One count query per member.
+       No listing records are downloaded.
+    ========================================================== */
+
+    if (
+      mode === "production-batch"
+    ) {
+      const startDate =
+        clean(
+          req.query?.startDate
+        );
+
+      const endDate =
+        clean(
+          req.query?.endDate
+        );
+
+      if (
+        !validDate(startDate) ||
+        !validDate(endDate)
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "startDate and endDate are required in YYYY-MM-DD format."
+          });
+      }
+
       const ids =
         clean(
           req.query?.ids
@@ -434,7 +550,7 @@ export default async function handler(
           .filter(Boolean)
           .slice(
             0,
-            25
+            15
           );
 
       if (!ids.length) {
@@ -445,50 +561,135 @@ export default async function handler(
               false,
 
             error:
-              "Provide one or more agent IDs."
+              "Provide one or more MemberKey values."
           });
       }
 
       const settled =
         await Promise.allSettled(
           ids.map(
-            id =>
-              resolveAgent(
-                id,
+            memberKey =>
+              countClosedTransactions({
+                memberKey,
+                startDate,
+                endDate,
+                token
+              })
+          )
+        );
+
+      const production =
+        settled.map(
+          (
+            result,
+            index
+          ) => ({
+            memberKey:
+              ids[index],
+
+            closedTransactions:
+              result.status ===
+              "fulfilled"
+                ? result.value
+                : null,
+
+            error:
+              result.status ===
+              "rejected"
+                ? (
+                    result.reason?.message ||
+                    "Production count failed."
+                  )
+                : null
+          })
+        );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          mode:
+            "ARMLS_MEMBER_PRODUCTION_BATCH",
+
+          startDate,
+          endDate,
+
+          count:
+            production.length,
+
+          production
+        });
+    }
+
+
+    /* ==========================================================
+       MODE 4:
+       RESOLVE BROKERAGE NAMES ONLY FOR FINAL DISPLAYED RESULTS.
+    ========================================================== */
+
+    if (
+      mode === "office-batch"
+    ) {
+      const officeKeys =
+        [
+          ...new Set(
+            clean(
+              req.query?.ids
+            )
+              .split(",")
+              .map(clean)
+              .filter(Boolean)
+          )
+        ]
+          .slice(
+            0,
+            25
+          );
+
+      if (!officeKeys.length) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Provide one or more OfficeKey values."
+          });
+      }
+
+      const settled =
+        await Promise.allSettled(
+          officeKeys.map(
+            officeKey =>
+              fetchOfficeName(
+                officeKey,
                 token
               )
           )
         );
 
-      const accounts =
+      const offices =
         settled.map(
           (
-            item,
+            result,
             index
           ) => {
             if (
-              item.status ===
+              result.status ===
               "fulfilled"
             ) {
-              return item.value;
+              return result.value;
             }
 
             return {
-              id:
-                ids[index],
+              officeKey:
+                officeKeys[index],
 
-              found:
-                false,
-
-              associations:
-                [],
-
-              phoenixRealtors:
-                false,
-
-              error:
-                item.reason?.message ||
-                "Agent resolution failed."
+              officeName:
+                null
             };
           }
         );
@@ -500,190 +701,29 @@ export default async function handler(
             true,
 
           mode:
-            "ARMLS_AGENT_NAME_BROKERAGE_ASSOCIATION_BATCH",
+            "ARMLS_OFFICE_NAME_BATCH",
 
           count:
-            accounts.length,
+            offices.length,
 
-          accounts,
-
-          note:
-            "Read-only account and association lookup. No email data is returned."
+          offices
         });
     }
 
-
-    /* ==========================================================
-       MODE 2:
-       PAGE THROUGH CLOSED LISTINGS
-
-       Only primary ListAgentId and BuyerAgentId are counted.
-       Co-list and co-buyer agents are intentionally excluded.
-    ========================================================== */
-
-    const startDate =
-      clean(
-        req.query?.startDate
-      );
-
-    const endDate =
-      clean(
-        req.query?.endDate
-      );
-
-    if (
-      !validDate(startDate) ||
-      !validDate(endDate)
-    ) {
-      return res
-        .status(400)
-        .json({
-          success:
-            false,
-
-          error:
-            "startDate and endDate are required in YYYY-MM-DD format."
-        });
-    }
-
-    const page =
-      safeInt(
-        req.query?.page,
-        1,
-        1,
-        10000
-      );
-
-    const limit =
-      safeInt(
-        req.query?.limit,
-        1000,
-        1,
-        1000
-      );
-
-    const start =
-      startTimestamp(
-        startDate
-      );
-
-    const end =
-      endTimestamp(
-        endDate
-      );
-
-    const filter =
-      `StandardStatus Eq 'Closed' ` +
-      `And CloseDate bt ${start},${end}`;
-
-    /*
-      Keep the listing response as small as possible.
-
-      If Spark ignores _select, the endpoint still works because
-      we only return the few fields BlueVera needs below.
-    */
-
-    const select =
-      [
-        "ListingId",
-        "ListingKey",
-        "StandardStatus",
-        "CloseDate",
-        "ListAgentId",
-        "BuyerAgentId"
-      ].join(",");
-
-    const url =
-      `${SPARK_BASE}/listings` +
-      `?_filter=${encodeURIComponent(filter)}` +
-      `&_limit=${limit}` +
-      `&_page=${page}` +
-      `&_select=${encodeURIComponent(select)}`;
-
-    const data =
-      await fetchJson(
-        url,
-        token
-      );
-
-    const results =
-      sparkResults(
-        data
-      );
-
-    const listings =
-      results.map(
-        listing => {
-          const fields =
-            listing?.StandardFields ||
-            listing?.standardFields ||
-            listing ||
-            {};
-
-          return {
-            listingKey:
-              clean(
-                listing?.Id ||
-                listing?.ListingKey ||
-                fields?.ListingKey
-              ) ||
-              null,
-
-            mlsNumber:
-              clean(
-                fields?.ListingId ||
-                fields?.MlsId
-              ) ||
-              null,
-
-            closeDate:
-              fields?.CloseDate ||
-              null,
-
-            listAgentId:
-              clean(
-                fields?.ListAgentId
-              ) ||
-              null,
-
-            buyerAgentId:
-              clean(
-                fields?.BuyerAgentId
-              ) ||
-              null
-          };
-        }
-      );
 
     return res
-      .status(200)
+      .status(400)
       .json({
         success:
-          true,
+          false,
 
-        mode:
-          "ARMLS_TOP_PRODUCER_LISTING_PAGE",
-
-        startDate,
-        endDate,
-        page,
-        limit,
-
-        count:
-          listings.length,
-
-        hasMore:
-          listings.length >= limit,
-
-        listings,
-
-        note:
-          "Read-only ARMLS top-producer scan. No Supabase records were created or changed."
+        error:
+          "Unknown mode."
       });
 
   } catch (error) {
     console.error(
-      "ARMLS top producer scan failed:",
+      "ARMLS random production tool failed:",
       error
     );
 
@@ -695,7 +735,7 @@ export default async function handler(
 
         error:
           error?.message ||
-          "ARMLS top producer scan failed."
+          "ARMLS random production tool failed."
       });
   }
 }
