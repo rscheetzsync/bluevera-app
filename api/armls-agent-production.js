@@ -4,73 +4,184 @@ const SPARK_BASE =
 const RESO_BASE =
   "https://replication.sparkapi.com/Version/3/Reso/OData";
 
-function clean(value) {
-  return String(value ?? "")
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
+
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY;
+
+const POOL_TABLE =
+  "armls_agent_production_pool";
+
+const clean = value =>
+  String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
-}
 
-function safeInt(value, fallback, min, max) {
-  const parsed = Number(value);
+const safeInt = (
+  value,
+  fallback,
+  min,
+  max
+) => {
+  const parsed =
+    Number(value);
 
   if (!Number.isInteger(parsed)) {
     return fallback;
   }
 
   return Math.min(
-    Math.max(parsed, min),
+    Math.max(
+      parsed,
+      min
+    ),
     max
   );
-}
+};
 
-function validDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(
+const validDate = value =>
+  /^\d{4}-\d{2}-\d{2}$/.test(
     clean(value)
   );
+
+const escapeSparkString = value =>
+  clean(value)
+    .replace(
+      /'/g,
+      "''"
+    );
+
+
+function supabaseHeaders(
+  extra = {}
+) {
+  return {
+    "Content-Type":
+      "application/json",
+
+    apikey:
+      SUPABASE_SECRET_KEY,
+
+    Authorization:
+      `Bearer ${SUPABASE_SECRET_KEY}`,
+
+    ...extra
+  };
 }
 
-function startTimestamp(date) {
-  return `${date}T00:00:00Z`;
-}
 
-function endTimestamp(date) {
-  return `${date}T23:59:59Z`;
-}
-
-function escapeSparkString(value) {
-  return clean(value)
-    .replace(/'/g, "''");
-}
-
-async function fetchJson(url, token) {
-  const response = await fetch(
-    url,
-    {
-      method: "GET",
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
-        Accept:
-          "application/json"
-      }
-    }
-  );
-
-  const text = await response.text();
-
-  let data = null;
-
-  try {
-    data = text
-      ? JSON.parse(text)
-      : null;
-  } catch {
+async function supabaseRequest(
+  path,
+  options = {}
+) {
+  if (
+    !SUPABASE_URL ||
+    !SUPABASE_SECRET_KEY
+  ) {
     throw new Error(
-      `Upstream returned non-JSON: ${text.slice(0, 300)}`
+      "Missing Supabase environment variables."
     );
   }
 
-  if (!response.ok) {
+  const response =
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/${path}`,
+      {
+        ...options,
+
+        headers:
+          supabaseHeaders(
+            options.headers ||
+            {}
+          )
+      }
+    );
+
+  const text =
+    await response.text();
+
+  let data =
+    null;
+
+  if (text) {
+    try {
+      data =
+        JSON.parse(
+          text
+        );
+    } catch {
+      data =
+        text;
+    }
+  }
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `Supabase ${response.status}: ${
+        typeof data ===
+        "string"
+          ? data
+          : JSON.stringify(
+              data
+            )
+      }`
+    );
+  }
+
+  return data;
+}
+
+
+async function fetchJson(
+  url,
+  token
+) {
+  const response =
+    await fetch(
+      url,
+      {
+        method:
+          "GET",
+
+        headers: {
+          Authorization:
+            `Bearer ${token}`,
+
+          Accept:
+            "application/json"
+        }
+      }
+    );
+
+  const text =
+    await response.text();
+
+  let data =
+    null;
+
+  try {
+    data =
+      text
+        ? JSON.parse(
+            text
+          )
+        : null;
+  } catch {
+    throw new Error(
+      `Upstream returned non-JSON: ${text.slice(
+        0,
+        300
+      )}`
+    );
+  }
+
+  if (
+    !response.ok
+  ) {
     throw new Error(
       data?.D?.Message ||
       data?.error?.message ||
@@ -82,7 +193,10 @@ async function fetchJson(url, token) {
   return data;
 }
 
-function odataResults(data) {
+
+function odataResults(
+  data
+) {
   return Array.isArray(
     data?.value
   )
@@ -90,15 +204,17 @@ function odataResults(data) {
     : [];
 }
 
-function associationNames(member) {
-  const rows =
+
+function associationNames(
+  member
+) {
+  return (
     Array.isArray(
       member?.Association
     )
       ? member.Association
-      : [];
-
-  return rows
+      : []
+  )
     .map(
       item =>
         clean(
@@ -107,11 +223,18 @@ function associationNames(member) {
           ""
         )
     )
-    .filter(Boolean);
+    .filter(
+      Boolean
+    );
 }
 
-function isPhoenixRealtor(member) {
-  return associationNames(member)
+
+function isPhoenixRealtor(
+  member
+) {
+  return associationNames(
+    member
+  )
     .some(
       name =>
         name.toUpperCase() ===
@@ -119,21 +242,94 @@ function isPhoenixRealtor(member) {
     );
 }
 
-function sparkCount(data) {
+
+function sparkCount(
+  data
+) {
   const total =
-    data?.D?.Pagination?.TotalRows ??
-    data?.Pagination?.TotalRows ??
+    data?.D?.Pagination
+      ?.TotalRows ??
+    data?.Pagination
+      ?.TotalRows ??
     data?.D?.TotalRows ??
     data?.TotalRows ??
     0;
 
   const parsed =
-    Number(total);
+    Number(
+      total
+    );
 
-  return Number.isFinite(parsed)
+  return Number.isFinite(
+    parsed
+  )
     ? parsed
     : 0;
 }
+
+
+async function fetchOfficeName(
+  officeKey,
+  officeMlsId,
+  token
+) {
+  const key =
+    clean(
+      officeKey
+    );
+
+  if (!key) {
+    return (
+      clean(
+        officeMlsId
+      ) ||
+      null
+    );
+  }
+
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "$select",
+    "OfficeKey,OfficeName,OfficeMlsId"
+  );
+
+  const url =
+    `${RESO_BASE}/Office('${encodeURIComponent(
+      key
+    )}')?${params.toString()}`;
+
+  try {
+    const data =
+      await fetchJson(
+        url,
+        token
+      );
+
+    return (
+      clean(
+        data?.OfficeName
+      ) ||
+      clean(
+        data?.OfficeMlsId
+      ) ||
+      clean(
+        officeMlsId
+      ) ||
+      null
+    );
+
+  } catch {
+    return (
+      clean(
+        officeMlsId
+      ) ||
+      null
+    );
+  }
+}
+
 
 async function countClosedTransactions({
   memberKey,
@@ -147,14 +343,10 @@ async function countClosedTransactions({
     );
 
   const start =
-    startTimestamp(
-      startDate
-    );
+    `${startDate}T00:00:00Z`;
 
   const end =
-    endTimestamp(
-      endDate
-    );
+    `${endDate}T23:59:59Z`;
 
   const filter =
     `StandardStatus Eq 'Closed' ` +
@@ -163,77 +355,48 @@ async function countClosedTransactions({
 
   const url =
     `${SPARK_BASE}/listings` +
-    `?_filter=${encodeURIComponent(filter)}` +
+    `?_filter=${encodeURIComponent(
+      filter
+    )}` +
     `&_pagination=count`;
 
-  const data =
+  return sparkCount(
     await fetchJson(
       url,
       token
-    );
-
-  return sparkCount(
-    data
+    )
   );
 }
 
-async function fetchOfficeName(
-  officeKey,
-  token
+
+async function readJsonBody(
+  req
 ) {
-  const key =
-    clean(
-      officeKey
-    );
-
-  if (!key) {
-    return {
-      officeKey:
-        null,
-
-      officeName:
-        null
-    };
+  if (
+    req.body &&
+    typeof req.body ===
+    "object"
+  ) {
+    return req.body;
   }
 
-  const params =
-    new URLSearchParams();
-
-  params.set(
-    "$select",
-    "OfficeKey,OfficeName,OfficeMlsId"
-  );
-
-  const url =
-    `${RESO_BASE}/Office('${encodeURIComponent(key)}')?${params.toString()}`;
-
-  try {
-    const data =
-      await fetchJson(
-        url,
-        token
+  if (
+    typeof req.body ===
+    "string" &&
+    req.body
+  ) {
+    try {
+      return JSON.parse(
+        req.body
       );
-
-    return {
-      officeKey:
-        data?.OfficeKey ??
-        key,
-
-      officeName:
-        data?.OfficeName ??
-        data?.OfficeMlsId ??
-        null
-    };
-  } catch {
-    return {
-      officeKey:
-        key,
-
-      officeName:
-        null
-    };
+    } catch {
+      return {};
+    }
   }
+
+  return {};
 }
+
 
 export default async function handler(
   req,
@@ -249,32 +412,15 @@ export default async function handler(
     "no-store, max-age=0"
   );
 
-  if (
-    req.method !== "GET"
-  ) {
-    res.setHeader(
-      "Allow",
-      "GET"
-    );
-
-    return res
-      .status(405)
-      .json({
-        success:
-          false,
-
-        error:
-          "Method not allowed."
-      });
-  }
-
   try {
     const token =
       process.env.SPARK_ACCESS_TOKEN;
 
     if (!token) {
       return res
-        .status(500)
+        .status(
+          500
+        )
         .json({
           success:
             false,
@@ -287,21 +433,24 @@ export default async function handler(
     const mode =
       clean(
         req.query?.mode ||
-        "member-page"
-      ).toLowerCase();
+        ""
+      )
+        .toLowerCase();
 
 
     /* ==========================================================
-       MODE 1:
-       LOAD A MANAGEABLE MEMBER PAGE
+       GET: SMALL RESO MEMBER PAGE
 
-       No total member count is requested.
-       The browser walks pages until it collects enough
-       Phoenix REALTORS members for the sampling pool.
+       Does not save anything.
+       Browser walks member pages and only sends
+       verified Phoenix REALTORS members to save-members.
     ========================================================== */
 
     if (
-      mode === "member-page"
+      req.method ===
+        "GET" &&
+      mode ===
+        "member-page"
     ) {
       const skip =
         safeInt(
@@ -314,9 +463,9 @@ export default async function handler(
       const top =
         safeInt(
           req.query?.top,
-          250,
+          25,
           1,
-          500
+          50
         );
 
       const params =
@@ -324,12 +473,16 @@ export default async function handler(
 
       params.set(
         "$top",
-        String(top)
+        String(
+          top
+        )
       );
 
       params.set(
         "$skip",
-        String(skip)
+        String(
+          skip
+        )
       );
 
       params.set(
@@ -343,7 +496,9 @@ export default async function handler(
           "MemberStatus",
           "OfficeKey",
           "OfficeMlsId"
-        ].join(",")
+        ].join(
+          ","
+        )
       );
 
       params.set(
@@ -368,10 +523,7 @@ export default async function handler(
       const members =
         allMembers
           .filter(
-            member =>
-              isPhoenixRealtor(
-                member
-              )
+            isPhoenixRealtor
           )
           .map(
             member => ({
@@ -389,11 +541,15 @@ export default async function handler(
                   member?.MemberFirstName,
                   member?.MemberLastName
                 ]
-                  .filter(Boolean)
-                  .join(" ") ||
+                  .filter(
+                    Boolean
+                  )
+                  .join(
+                    " "
+                  ) ||
                 null,
 
-              status:
+              memberStatus:
                 member?.MemberStatus ??
                 null,
 
@@ -405,7 +561,7 @@ export default async function handler(
                 member?.OfficeMlsId ??
                 null,
 
-              association:
+              associationName:
                 "Phoenix REALTORS"
             })
           )
@@ -417,7 +573,9 @@ export default async function handler(
           );
 
       return res
-        .status(200)
+        .status(
+          200
+        )
         .json({
           success:
             true,
@@ -426,6 +584,7 @@ export default async function handler(
             "PHOENIX_REALTORS_MEMBER_PAGE",
 
           skip,
+
           requested:
             top,
 
@@ -436,7 +595,12 @@ export default async function handler(
             members.length,
 
           endReached:
-            allMembers.length < top,
+            allMembers.length <
+            top,
+
+          nextSkip:
+            skip +
+            allMembers.length,
 
           members
         });
@@ -444,31 +608,297 @@ export default async function handler(
 
 
     /* ==========================================================
-       MODE 2:
-       COUNT PRODUCTION FOR A SMALL BATCH OF MEMBERS
+       POST: SAVE VERIFIED PHOENIX REALTORS
 
-       No listing records are downloaded.
+       Duplicate-safe by member_key.
     ========================================================== */
 
     if (
-      mode === "production-batch"
+      req.method ===
+        "POST" &&
+      mode ===
+        "save-members"
     ) {
+      const body =
+        await readJsonBody(
+          req
+        );
+
+      const members =
+        (
+          Array.isArray(
+            body?.members
+          )
+            ? body.members
+            : []
+        )
+          .filter(
+            member =>
+              clean(
+                member?.memberKey
+              )
+          )
+          .slice(
+            0,
+            25
+          );
+
+      if (
+        !members.length
+      ) {
+        return res
+          .status(
+            400
+          )
+          .json({
+            success:
+              false,
+
+            error:
+              "No members supplied."
+          });
+      }
+
+      const officeResults =
+        await Promise.allSettled(
+          members.map(
+            member =>
+              fetchOfficeName(
+                member.officeKey,
+                member.officeMlsId,
+                token
+              )
+          )
+        );
+
+      const now =
+        new Date()
+          .toISOString();
+
+      const payload =
+        members.map(
+          (
+            member,
+            index
+          ) => ({
+            member_key:
+              clean(
+                member.memberKey
+              ),
+
+            member_mls_id:
+              clean(
+                member.memberMlsId
+              ) ||
+              null,
+
+            full_name:
+              clean(
+                member.fullName
+              ) ||
+              null,
+
+            office_key:
+              clean(
+                member.officeKey
+              ) ||
+              null,
+
+            office_mls_id:
+              clean(
+                member.officeMlsId
+              ) ||
+              null,
+
+            office_name:
+              officeResults[
+                index
+              ]?.status ===
+              "fulfilled"
+                ? (
+                    officeResults[
+                      index
+                    ].value ||
+                    null
+                  )
+                : (
+                    clean(
+                      member.officeMlsId
+                    ) ||
+                    null
+                  ),
+
+            association_name:
+              "Phoenix REALTORS",
+
+            member_status:
+              clean(
+                member.memberStatus
+              ) ||
+              null,
+
+            production_status:
+              "pending",
+
+            updated_at:
+              now
+          })
+        );
+
+      const rows =
+        await supabaseRequest(
+          `${POOL_TABLE}?on_conflict=member_key`,
+          {
+            method:
+              "POST",
+
+            headers: {
+              Prefer:
+                "resolution=merge-duplicates,return=representation"
+            },
+
+            body:
+              JSON.stringify(
+                payload
+              )
+          }
+        );
+
+      return res
+        .status(
+          200
+        )
+        .json({
+          success:
+            true,
+
+          mode:
+            "SAVE_PHOENIX_REALTORS_MEMBERS",
+
+          received:
+            members.length,
+
+          saved:
+            Array.isArray(
+              rows
+            )
+              ? rows.length
+              : 0,
+
+          rows:
+            Array.isArray(
+              rows
+            )
+              ? rows
+              : []
+        });
+    }
+
+
+    /* ==========================================================
+       GET: SUMMARY
+    ========================================================== */
+
+    if (
+      req.method ===
+        "GET" &&
+      mode ===
+        "summary"
+    ) {
+      const rows =
+        await supabaseRequest(
+          `${POOL_TABLE}?select=member_key,production_status`,
+          {
+            method:
+              "GET"
+          }
+        );
+
+      const list =
+        Array.isArray(
+          rows
+        )
+          ? rows
+          : [];
+
+      const completed =
+        list.filter(
+          row =>
+            row.production_status ===
+            "complete"
+        ).length;
+
+      return res
+        .status(
+          200
+        )
+        .json({
+          success:
+            true,
+
+          mode:
+            "POOL_SUMMARY",
+
+          total:
+            list.length,
+
+          completed,
+
+          pending:
+            list.length -
+            completed
+        });
+    }
+
+
+    /* ==========================================================
+       POST: CALCULATE PRODUCTION
+
+       Works only from saved BlueVera pool.
+       Runs a small batch and stores results.
+    ========================================================== */
+
+    if (
+      req.method ===
+        "POST" &&
+      mode ===
+        "calculate-production"
+    ) {
+      const body =
+        await readJsonBody(
+          req
+        );
+
       const startDate =
         clean(
-          req.query?.startDate
+          body?.startDate
         );
 
       const endDate =
         clean(
-          req.query?.endDate
+          body?.endDate
+        );
+
+      const batchSize =
+        safeInt(
+          body?.batchSize,
+          5,
+          1,
+          10
         );
 
       if (
-        !validDate(startDate) ||
-        !validDate(endDate)
+        !validDate(
+          startDate
+        ) ||
+        !validDate(
+          endDate
+        )
       ) {
         return res
-          .status(400)
+          .status(
+            400
+          )
           .json({
             success:
               false,
@@ -478,178 +908,289 @@ export default async function handler(
           });
       }
 
-      const ids =
-        clean(
-          req.query?.ids
-        )
-          .split(",")
-          .map(clean)
-          .filter(Boolean)
-          .slice(
-            0,
-            10
-          );
+      const pendingRows =
+        await supabaseRequest(
+          `${POOL_TABLE}` +
+          `?select=*` +
+          `&production_status=neq.complete` +
+          `&order=created_at.asc` +
+          `&limit=${batchSize}`,
+          {
+            method:
+              "GET"
+          }
+        );
 
-      if (!ids.length) {
+      const pending =
+        Array.isArray(
+          pendingRows
+        )
+          ? pendingRows
+          : [];
+
+      if (
+        !pending.length
+      ) {
         return res
-          .status(400)
+          .status(
+            200
+          )
           .json({
             success:
-              false,
+              true,
 
-            error:
-              "Provide one or more MemberKey values."
+            mode:
+              "CALCULATE_PRODUCTION",
+
+            processed:
+              0,
+
+            done:
+              true,
+
+            results:
+              []
           });
       }
 
       const settled =
         await Promise.allSettled(
-          ids.map(
-            memberKey =>
+          pending.map(
+            row =>
               countClosedTransactions({
-                memberKey,
+                memberKey:
+                  row.member_key,
+
                 startDate,
+
                 endDate,
+
                 token
               })
           )
         );
 
-      const production =
-        settled.map(
-          (
-            result,
+      const results =
+        [];
+
+      for (
+        let index = 0;
+        index <
+        pending.length;
+        index += 1
+      ) {
+        const row =
+          pending[
             index
-          ) => ({
+          ];
+
+        const result =
+          settled[
+            index
+          ];
+
+        const now =
+          new Date()
+            .toISOString();
+
+        if (
+          result.status ===
+          "fulfilled"
+        ) {
+          const count =
+            Number(
+              result.value
+            ) ||
+            0;
+
+          await supabaseRequest(
+            `${POOL_TABLE}` +
+            `?member_key=eq.${encodeURIComponent(
+              row.member_key
+            )}`,
+            {
+              method:
+                "PATCH",
+
+              headers: {
+                Prefer:
+                  "return=representation"
+              },
+
+              body:
+                JSON.stringify({
+                  closed_transactions_12mo:
+                    count,
+
+                  production_status:
+                    "complete",
+
+                  production_checked_at:
+                    now,
+
+                  production_start_date:
+                    startDate,
+
+                  production_end_date:
+                    endDate,
+
+                  production_error:
+                    null,
+
+                  updated_at:
+                    now
+                })
+            }
+          );
+
+          results.push({
             memberKey:
-              ids[index],
+              row.member_key,
 
             closedTransactions:
-              result.status ===
-              "fulfilled"
-                ? result.value
-                : null,
+              count,
+
+            status:
+              "complete"
+          });
+
+        } else {
+          const errorText =
+            result.reason
+              ?.message ||
+            "Production count failed.";
+
+          await supabaseRequest(
+            `${POOL_TABLE}` +
+            `?member_key=eq.${encodeURIComponent(
+              row.member_key
+            )}`,
+            {
+              method:
+                "PATCH",
+
+              headers: {
+                Prefer:
+                  "return=representation"
+              },
+
+              body:
+                JSON.stringify({
+                  production_status:
+                    "error",
+
+                  production_error:
+                    errorText,
+
+                  production_checked_at:
+                    now,
+
+                  updated_at:
+                    now
+                })
+            }
+          );
+
+          results.push({
+            memberKey:
+              row.member_key,
+
+            closedTransactions:
+              null,
+
+            status:
+              "error",
 
             error:
-              result.status ===
-              "rejected"
-                ? (
-                    result.reason?.message ||
-                    "Production count failed."
-                  )
-                : null
-          })
-        );
+              errorText
+          });
+        }
+      }
 
       return res
-        .status(200)
+        .status(
+          200
+        )
         .json({
           success:
             true,
 
           mode:
-            "ARMLS_MEMBER_PRODUCTION_BATCH",
+            "CALCULATE_PRODUCTION",
 
-          startDate,
-          endDate,
+          processed:
+            results.length,
 
-          count:
-            production.length,
+          done:
+            false,
 
-          production
+          results
         });
     }
 
 
     /* ==========================================================
-       MODE 3:
-       RESOLVE BROKERAGE NAMES ONLY FOR DISPLAYED RESULTS
+       GET: LIST SAVED AGENTS
     ========================================================== */
 
     if (
-      mode === "office-batch"
+      req.method ===
+        "GET" &&
+      mode ===
+        "list"
     ) {
-      const officeKeys =
-        [
-          ...new Set(
-            clean(
-              req.query?.ids
-            )
-              .split(",")
-              .map(clean)
-              .filter(Boolean)
-          )
-        ]
-          .slice(
-            0,
-            20
-          );
-
-      if (!officeKeys.length) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            error:
-              "Provide one or more OfficeKey values."
-          });
-      }
-
-      const settled =
-        await Promise.allSettled(
-          officeKeys.map(
-            officeKey =>
-              fetchOfficeName(
-                officeKey,
-                token
-              )
-          )
+      const limit =
+        safeInt(
+          req.query?.limit,
+          500,
+          1,
+          1000
         );
 
-      const offices =
-        settled.map(
-          (
-            result,
-            index
-          ) => {
-            if (
-              result.status ===
-              "fulfilled"
-            ) {
-              return result.value;
-            }
-
-            return {
-              officeKey:
-                officeKeys[index],
-
-              officeName:
-                null
-            };
+      const rows =
+        await supabaseRequest(
+          `${POOL_TABLE}` +
+          `?select=*` +
+          `&order=closed_transactions_12mo.desc.nullslast,full_name.asc` +
+          `&limit=${limit}`,
+          {
+            method:
+              "GET"
           }
         );
 
       return res
-        .status(200)
+        .status(
+          200
+        )
         .json({
           success:
             true,
 
           mode:
-            "ARMLS_OFFICE_NAME_BATCH",
+            "POOL_LIST",
 
           count:
-            offices.length,
+            Array.isArray(
+              rows
+            )
+              ? rows.length
+              : 0,
 
-          offices
+          rows:
+            Array.isArray(
+              rows
+            )
+              ? rows
+              : []
         });
     }
 
 
     return res
-      .status(400)
+      .status(
+        400
+      )
       .json({
         success:
           false,
@@ -658,21 +1199,25 @@ export default async function handler(
           "Unknown mode."
       });
 
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
-      "ARMLS sample production tool failed:",
+      "ARMLS production pool failed:",
       error
     );
 
     return res
-      .status(500)
+      .status(
+        500
+      )
       .json({
         success:
           false,
 
         error:
           error?.message ||
-          "ARMLS sample production tool failed."
+          "ARMLS production pool failed."
       });
   }
 }
