@@ -1,6 +1,9 @@
 const SPARK_BASE =
   "https://replication.sparkapi.com/v1";
 
+const RESO_BASE =
+  "https://replication.sparkapi.com/Version/3/Reso/OData";
+
 function clean(value) {
   return String(value ?? "")
     .replace(/\s+/g, " ")
@@ -12,9 +15,13 @@ function escapeSparkString(value) {
     .replace(/'/g, "''");
 }
 
+function escapeODataString(value) {
+  return clean(value)
+    .replace(/'/g, "''");
+}
+
 function safeInt(value, fallback, min, max) {
-  const parsed =
-    Number(value);
+  const parsed = Number(value);
 
   if (!Number.isInteger(parsed)) {
     return fallback;
@@ -40,7 +47,7 @@ function endTimestamp(date) {
   return `${date}T23:59:59Z`;
 }
 
-async function sparkRequest(
+async function fetchJson(
   url,
   token
 ) {
@@ -63,8 +70,7 @@ async function sparkRequest(
   const text =
     await response.text();
 
-  let data =
-    null;
+  let data = null;
 
   try {
     data =
@@ -80,6 +86,7 @@ async function sparkRequest(
   if (!response.ok) {
     throw new Error(
       data?.D?.Message ||
+      data?.error?.message ||
       data?.message ||
       `Spark request failed (${response.status})`
     );
@@ -100,7 +107,35 @@ function sparkResults(data) {
       : [];
 }
 
-async function fetchAgentAccount(
+function odataResults(data) {
+  return Array.isArray(
+    data?.value
+  )
+    ? data.value
+    : [];
+}
+
+function associationNames(member) {
+  const rows =
+    Array.isArray(
+      member?.Association
+    )
+      ? member.Association
+      : [];
+
+  return rows
+    .map(
+      item =>
+        clean(
+          item?.AssociationName ||
+          item?.Name ||
+          ""
+        )
+    )
+    .filter(Boolean);
+}
+
+async function fetchLegacyAccount(
   agentId,
   token
 ) {
@@ -118,7 +153,7 @@ async function fetchAgentAccount(
     `&_limit=1`;
 
   const data =
-    await sparkRequest(
+    await fetchJson(
       url,
       token
     );
@@ -129,22 +164,13 @@ async function fetchAgentAccount(
     )[0];
 
   if (!account) {
-    return {
-      id:
-        agentId,
-
-      found:
-        false
-    };
+    return null;
   }
 
   return {
     id:
       account?.Id ??
       agentId,
-
-    found:
-      true,
 
     shortId:
       account?.ShortId ??
@@ -184,6 +210,157 @@ async function fetchAgentAccount(
     userType:
       account?.UserType ??
       null
+  };
+}
+
+async function fetchResoMemberByShortId(
+  shortId,
+  token
+) {
+  const safeShortId =
+    escapeODataString(
+      shortId
+    );
+
+  if (!safeShortId) {
+    return null;
+  }
+
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "$filter",
+    `MemberMlsId eq '${safeShortId}'`
+  );
+
+  params.set(
+    "$top",
+    "1"
+  );
+
+  params.set(
+    "$expand",
+    "Association"
+  );
+
+  const url =
+    `${RESO_BASE}/Member?${params.toString()}`;
+
+  const data =
+    await fetchJson(
+      url,
+      token
+    );
+
+  const member =
+    odataResults(
+      data
+    )[0];
+
+  if (!member) {
+    return null;
+  }
+
+  return {
+    memberKey:
+      member?.MemberKey ??
+      null,
+
+    memberMlsId:
+      member?.MemberMlsId ??
+      shortId,
+
+    status:
+      member?.MemberStatus ??
+      null,
+
+    associations:
+      associationNames(
+        member
+      )
+  };
+}
+
+async function resolveAgent(
+  agentId,
+  token
+) {
+  const account =
+    await fetchLegacyAccount(
+      agentId,
+      token
+    );
+
+  if (!account) {
+    return {
+      id:
+        agentId,
+
+      found:
+        false,
+
+      associations:
+        [],
+
+      phoenixRealtors:
+        false
+    };
+  }
+
+  let resoMember =
+    null;
+
+  if (
+    account.shortId
+  ) {
+    try {
+      resoMember =
+        await fetchResoMemberByShortId(
+          account.shortId,
+          token
+        );
+    } catch (error) {
+      console.warn(
+        "RESO association lookup failed for",
+        account.shortId,
+        error?.message
+      );
+    }
+  }
+
+  const associations =
+    Array.isArray(
+      resoMember?.associations
+    )
+      ? resoMember.associations
+      : [];
+
+  const phoenixRealtors =
+    associations.some(
+      name =>
+        clean(name)
+          .toUpperCase() ===
+        "PHOENIX REALTORS"
+    );
+
+  return {
+    ...account,
+
+    found:
+      true,
+
+    memberKey:
+      resoMember?.memberKey ??
+      null,
+
+    memberStatus:
+      resoMember?.status ??
+      null,
+
+    associations,
+
+    phoenixRealtors
   };
 }
 
@@ -245,7 +422,7 @@ export default async function handler(
 
     /* ==========================================================
        MODE 1:
-       LOOK UP ARMLS MEMBER ACCOUNTS BY AGENT ID
+       RESOLVE AGENT ACCOUNTS + PHOENIX REALTORS ASSOCIATION
     ========================================================== */
 
     if (
@@ -279,7 +456,7 @@ export default async function handler(
         await Promise.allSettled(
           ids.map(
             id =>
-              fetchAgentAccount(
+              resolveAgent(
                 id,
                 token
               )
@@ -306,9 +483,15 @@ export default async function handler(
               found:
                 false,
 
+              associations:
+                [],
+
+              phoenixRealtors:
+                false,
+
               error:
                 item.reason?.message ||
-                "Account lookup failed."
+                "Agent resolution failed."
             };
           }
         );
@@ -320,19 +503,22 @@ export default async function handler(
             true,
 
           mode:
-            "ARMLS_AGENT_ACCOUNT_BATCH",
+            "ARMLS_AGENT_ACCOUNT_ASSOCIATION_BATCH",
 
           count:
             accounts.length,
 
-          accounts
+          accounts,
+
+          note:
+            "Read-only account and association lookup."
         });
     }
 
 
     /* ==========================================================
        MODE 2:
-       PAGE THROUGH CLOSED ARMLS LISTINGS
+       PAGE THROUGH CLOSED LISTINGS
     ========================================================== */
 
     const startDate =
@@ -386,16 +572,6 @@ export default async function handler(
         endDate
       );
 
-    /*
-      CORRECTED SPARK FILTER
-
-      Example:
-      StandardStatus Eq 'Closed'
-      And CloseDate bt
-      2025-09-29T00:00:00Z,
-      2026-09-29T23:59:59Z
-    */
-
     const filter =
       `StandardStatus Eq 'Closed' ` +
       `And CloseDate bt ${start},${end}`;
@@ -406,13 +582,8 @@ export default async function handler(
       `&_limit=${limit}` +
       `&_page=${page}`;
 
-    console.log(
-      "ARMLS production filter:",
-      filter
-    );
-
     const data =
-      await sparkRequest(
+      await fetchJson(
         url,
         token
       );
@@ -425,7 +596,6 @@ export default async function handler(
     const listings =
       results.map(
         listing => {
-
           const fields =
             listing?.StandardFields ||
             listing?.standardFields ||
@@ -496,13 +666,6 @@ export default async function handler(
 
         startDate,
         endDate,
-
-        startTimestamp:
-          start,
-
-        endTimestamp:
-          end,
-
         page,
         limit,
 
