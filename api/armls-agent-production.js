@@ -240,10 +240,8 @@ function getAssociationNames(
     .map(
       association =>
         clean(
-          association
-            ?.AssociationName ||
-          association
-            ?.Name ||
+          association?.AssociationName ||
+          association?.Name ||
           ""
         )
     )
@@ -636,15 +634,15 @@ export default async function handler(
 
               fullName:
                 member?.MemberFullName ??
-                [
-                  member
-                    ?.MemberFirstName,
-                  member
-                    ?.MemberLastName
-                ]
-                  .filter(Boolean)
-                  .join(" ") ||
-                null,
+                (
+                  [
+                    member?.MemberFirstName,
+                    member?.MemberLastName
+                  ]
+                    .filter(Boolean)
+                    .join(" ") ||
+                  null
+                ),
 
               memberStatus:
                 member?.MemberStatus ??
@@ -790,13 +788,6 @@ export default async function handler(
                 member.officeMlsId
               ) ||
               null,
-
-            /*
-              For now we use OfficeMlsId as the brokerage
-              display value.
-
-              We can resolve full brokerage names later.
-            */
 
             office_name:
               clean(
@@ -967,13 +958,6 @@ export default async function handler(
       const results =
         [];
 
-      /*
-        Do these sequentially on purpose.
-
-        That is slower, but much safer for ARMLS/Vercel
-        than firing several count requests simultaneously.
-      */
-
       for (
         const agent of rows
       ) {
@@ -1135,11 +1119,6 @@ export default async function handler(
       "ARMLS agent production API error:",
       error
     );
-
-    /*
-      Important:
-      Even errors return JSON now.
-    */
 
     return res
       .status(500)
