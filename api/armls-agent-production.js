@@ -56,19 +56,17 @@ async function fetchJson(url, token) {
     }
   );
 
-  const text =
-    await response.text();
+  const text = await response.text();
 
   let data = null;
 
   try {
-    data =
-      text
-        ? JSON.parse(text)
-        : null;
+    data = text
+      ? JSON.parse(text)
+      : null;
   } catch {
     throw new Error(
-      `Spark returned invalid JSON: ${text.slice(0, 1200)}`
+      `Upstream returned non-JSON: ${text.slice(0, 300)}`
     );
   }
 
@@ -77,7 +75,7 @@ async function fetchJson(url, token) {
       data?.D?.Message ||
       data?.error?.message ||
       data?.message ||
-      `Spark request failed (${response.status})`
+      `Upstream request failed (${response.status})`
     );
   }
 
@@ -125,6 +123,8 @@ function sparkCount(data) {
   const total =
     data?.D?.Pagination?.TotalRows ??
     data?.Pagination?.TotalRows ??
+    data?.D?.TotalRows ??
+    data?.TotalRows ??
     0;
 
   const parsed =
@@ -156,16 +156,6 @@ async function countClosedTransactions({
       endDate
     );
 
-  /*
-    Count each CLOSED MLS listing once when this member is either
-    the primary list agent OR the primary buyer agent.
-
-    Co-list and co-buyer agents are intentionally excluded.
-
-    _pagination=count returns only the number of matching rows,
-    not the listing records themselves.
-  */
-
   const filter =
     `StandardStatus Eq 'Closed' ` +
     `And CloseDate bt ${start},${end} ` +
@@ -174,8 +164,7 @@ async function countClosedTransactions({
   const url =
     `${SPARK_BASE}/listings` +
     `?_filter=${encodeURIComponent(filter)}` +
-    `&_pagination=count` +
-    `&_limit=0`;
+    `&_pagination=count`;
 
   const data =
     await fetchJson(
@@ -198,12 +187,25 @@ async function fetchOfficeName(
     );
 
   if (!key) {
-    return null;
+    return {
+      officeKey:
+        null,
+
+      officeName:
+        null
+    };
   }
 
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "$select",
+    "OfficeKey,OfficeName,OfficeMlsId"
+  );
+
   const url =
-    `${RESO_BASE}/Office('${encodeURIComponent(key)}')` +
-    `?$select=OfficeKey,OfficeName,OfficeMlsId`;
+    `${RESO_BASE}/Office('${encodeURIComponent(key)}')?${params.toString()}`;
 
   try {
     const data =
@@ -285,76 +287,17 @@ export default async function handler(
     const mode =
       clean(
         req.query?.mode ||
-        "member-count"
+        "member-page"
       ).toLowerCase();
 
 
     /* ==========================================================
        MODE 1:
-       GET TOTAL VISIBLE ARMLS MEMBER COUNT
+       LOAD A MANAGEABLE MEMBER PAGE
 
-       The browser uses this only to choose random page offsets.
-    ========================================================== */
-
-    if (
-      mode === "member-count"
-    ) {
-      const params =
-        new URLSearchParams();
-
-      params.set(
-        "$top",
-        "1"
-      );
-
-      params.set(
-        "$count",
-        "true"
-      );
-
-      params.set(
-        "$select",
-        "MemberKey"
-      );
-
-      const url =
-        `${RESO_BASE}/Member?${params.toString()}`;
-
-      const data =
-        await fetchJson(
-          url,
-          token
-        );
-
-      const totalMembers =
-        Number(
-          data?.["@odata.count"] ??
-          0
-        );
-
-      return res
-        .status(200)
-        .json({
-          success:
-            true,
-
-          mode:
-            "ARMLS_MEMBER_COUNT",
-
-          totalMembers:
-            Number.isFinite(totalMembers)
-              ? totalMembers
-              : 0
-        });
-    }
-
-
-    /* ==========================================================
-       MODE 2:
-       RETURN ONE RANDOMIZABLE MEMBER PAGE,
-       FILTERED LOCALLY TO PHOENIX REALTORS.
-
-       The browser supplies a random $skip value.
+       No total member count is requested.
+       The browser walks pages until it collects enough
+       Phoenix REALTORS members for the sampling pool.
     ========================================================== */
 
     if (
@@ -371,9 +314,9 @@ export default async function handler(
       const top =
         safeInt(
           req.query?.top,
-          500,
+          250,
           1,
-          1000
+          500
         );
 
       const params =
@@ -440,14 +383,6 @@ export default async function handler(
                 member?.MemberMlsId ??
                 null,
 
-              firstName:
-                member?.MemberFirstName ??
-                null,
-
-              lastName:
-                member?.MemberLastName ??
-                null,
-
               fullName:
                 member?.MemberFullName ??
                 [
@@ -488,7 +423,7 @@ export default async function handler(
             true,
 
           mode:
-            "PHOENIX_REALTORS_RANDOM_PAGE",
+            "PHOENIX_REALTORS_MEMBER_PAGE",
 
           skip,
           requested:
@@ -500,16 +435,18 @@ export default async function handler(
           phoenixCount:
             members.length,
 
+          endReached:
+            allMembers.length < top,
+
           members
         });
     }
 
 
     /* ==========================================================
-       MODE 3:
-       CHECK PRODUCTION FOR A SMALL BATCH OF MEMBERS.
+       MODE 2:
+       COUNT PRODUCTION FOR A SMALL BATCH OF MEMBERS
 
-       One count query per member.
        No listing records are downloaded.
     ========================================================== */
 
@@ -550,7 +487,7 @@ export default async function handler(
           .filter(Boolean)
           .slice(
             0,
-            15
+            10
           );
 
       if (!ids.length) {
@@ -625,8 +562,8 @@ export default async function handler(
 
 
     /* ==========================================================
-       MODE 4:
-       RESOLVE BROKERAGE NAMES ONLY FOR FINAL DISPLAYED RESULTS.
+       MODE 3:
+       RESOLVE BROKERAGE NAMES ONLY FOR DISPLAYED RESULTS
     ========================================================== */
 
     if (
@@ -645,7 +582,7 @@ export default async function handler(
         ]
           .slice(
             0,
-            25
+            20
           );
 
       if (!officeKeys.length) {
@@ -723,7 +660,7 @@ export default async function handler(
 
   } catch (error) {
     console.error(
-      "ARMLS random production tool failed:",
+      "ARMLS sample production tool failed:",
       error
     );
 
@@ -735,7 +672,7 @@ export default async function handler(
 
         error:
           error?.message ||
-          "ARMLS random production tool failed."
+          "ARMLS sample production tool failed."
       });
   }
 }
