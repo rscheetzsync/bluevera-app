@@ -13,7 +13,8 @@ function escapeSparkString(value) {
 }
 
 function safeInt(value, fallback, min, max) {
-  const parsed = Number(value);
+  const parsed =
+    Number(value);
 
   if (!Number.isInteger(parsed)) {
     return fallback;
@@ -31,7 +32,18 @@ function validDate(value) {
   );
 }
 
-async function sparkRequest(url, token) {
+function startTimestamp(date) {
+  return `${date}T00:00:00Z`;
+}
+
+function endTimestamp(date) {
+  return `${date}T23:59:59Z`;
+}
+
+async function sparkRequest(
+  url,
+  token
+) {
   const response =
     await fetch(
       url,
@@ -51,7 +63,8 @@ async function sparkRequest(url, token) {
   const text =
     await response.text();
 
-  let data = null;
+  let data =
+    null;
 
   try {
     data =
@@ -92,7 +105,9 @@ async function fetchAgentAccount(
   token
 ) {
   const safeAgentId =
-    escapeSparkString(agentId);
+    escapeSparkString(
+      agentId
+    );
 
   const filter =
     `UserType Eq 'Member' And Id Eq '${safeAgentId}'`;
@@ -109,7 +124,9 @@ async function fetchAgentAccount(
     );
 
   const account =
-    sparkResults(data)[0];
+    sparkResults(
+      data
+    )[0];
 
   if (!account) {
     return {
@@ -229,9 +246,6 @@ export default async function handler(
     /* ==========================================================
        MODE 1:
        LOOK UP ARMLS MEMBER ACCOUNTS BY AGENT ID
-
-       This is deliberately separate from the listing pull so
-       the browser can resolve qualified agents in small batches.
     ========================================================== */
 
     if (
@@ -244,7 +258,10 @@ export default async function handler(
           .split(",")
           .map(clean)
           .filter(Boolean)
-          .slice(0, 25);
+          .slice(
+            0,
+            25
+          );
 
       if (!ids.length) {
         return res
@@ -271,7 +288,10 @@ export default async function handler(
 
       const accounts =
         settled.map(
-          (item, index) => {
+          (
+            item,
+            index
+          ) => {
             if (
               item.status ===
               "fulfilled"
@@ -313,11 +333,6 @@ export default async function handler(
     /* ==========================================================
        MODE 2:
        PAGE THROUGH CLOSED ARMLS LISTINGS
-
-       Based on BlueVera's existing ARMLS ZIP retrieval pattern:
-       /listings + _filter + _limit + _page
-
-       Co-list and co-buyer agents are intentionally NOT counted.
     ========================================================== */
 
     const startDate =
@@ -361,23 +376,40 @@ export default async function handler(
         1000
       );
 
-    /*
-      Keep the syntax consistent with the Spark-style filters
-      already used by BlueVera.
+    const start =
+      startTimestamp(
+        startDate
+      );
 
-      We request Closed listings and constrain by CloseDate.
+    const end =
+      endTimestamp(
+        endDate
+      );
+
+    /*
+      CORRECTED SPARK FILTER
+
+      Example:
+      StandardStatus Eq 'Closed'
+      And CloseDate bt
+      2025-09-29T00:00:00Z,
+      2026-09-29T23:59:59Z
     */
 
     const filter =
       `StandardStatus Eq 'Closed' ` +
-      `And CloseDate Ge '${startDate}' ` +
-      `And CloseDate Le '${endDate}'`;
+      `And CloseDate bt ${start},${end}`;
 
     const url =
       `${SPARK_BASE}/listings` +
       `?_filter=${encodeURIComponent(filter)}` +
       `&_limit=${limit}` +
       `&_page=${page}`;
+
+    console.log(
+      "ARMLS production filter:",
+      filter
+    );
 
     const data =
       await sparkRequest(
@@ -386,11 +418,14 @@ export default async function handler(
       );
 
     const results =
-      sparkResults(data);
+      sparkResults(
+        data
+      );
 
     const listings =
       results.map(
         listing => {
+
           const fields =
             listing?.StandardFields ||
             listing?.standardFields ||
@@ -461,6 +496,13 @@ export default async function handler(
 
         startDate,
         endDate,
+
+        startTimestamp:
+          start,
+
+        endTimestamp:
+          end,
+
         page,
         limit,
 
