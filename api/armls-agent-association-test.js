@@ -1,5 +1,5 @@
-const SPARK_BASE =
-  "https://replication.sparkapi.com/v1";
+const RESO_BASE =
+  "https://replication.sparkapi.com/Version/3/Reso/OData";
 
 function clean(value) {
   return String(value ?? "")
@@ -7,7 +7,7 @@ function clean(value) {
     .trim();
 }
 
-function escapeSparkString(value) {
+function escapeODataString(value) {
   return clean(value)
     .replace(/'/g, "''");
 }
@@ -78,30 +78,41 @@ export default async function handler(
       );
 
     if (
-      !shortId &&
       !firstName &&
-      !lastName
+      !lastName &&
+      !shortId
     ) {
       return res
         .status(400)
         .json({
           success: false,
           error:
-            "Provide a ShortID or agent first/last name."
+            "Provide firstName/lastName or shortId."
         });
     }
+
+    /*
+      RESO VERSION 3 MEMBER RESOURCE
+
+      Spark documents Association as an expandable
+      relationship on this Member endpoint.
+    */
 
     let filter = "";
 
     if (shortId) {
       const safeShortId =
-        escapeSparkString(
+        escapeODataString(
           shortId
         );
 
+      /*
+        RESO Member uses MemberMlsId
+        for the member's MLS ID / Short ID.
+      */
+
       filter =
-        `UserType Eq 'Member' ` +
-        `And ShortId Eq '${safeShortId}'`;
+        `MemberMlsId eq '${safeShortId}'`;
     }
 
     else if (
@@ -109,60 +120,63 @@ export default async function handler(
       lastName
     ) {
       const safeFirstName =
-        escapeSparkString(
+        escapeODataString(
           firstName
         );
 
       const safeLastName =
-        escapeSparkString(
+        escapeODataString(
           lastName
         );
 
       filter =
-        `UserType Eq 'Member' ` +
-        `And FirstName Eq '${safeFirstName}' ` +
-        `And LastName Eq '${safeLastName}'`;
+        `MemberFirstName eq '${safeFirstName}' ` +
+        `and MemberLastName eq '${safeLastName}'`;
     }
 
     else if (lastName) {
       const safeLastName =
-        escapeSparkString(
+        escapeODataString(
           lastName
         );
 
       filter =
-        `UserType Eq 'Member' ` +
-        `And LastName Eq '${safeLastName}'`;
+        `MemberLastName eq '${safeLastName}'`;
     }
 
     else {
       const safeFirstName =
-        escapeSparkString(
+        escapeODataString(
           firstName
         );
 
       filter =
-        `UserType Eq 'Member' ` +
-        `And FirstName Eq '${safeFirstName}'`;
+        `MemberFirstName eq '${safeFirstName}'`;
     }
 
-    /*
-      IMPORTANT:
+    const params =
+      new URLSearchParams();
 
-      Association is the Spark Member expansion
-      we are testing.
+    params.set(
+      "$filter",
+      filter
+    );
 
-      No records are written anywhere.
-    */
+    params.set(
+      "$top",
+      "25"
+    );
+
+    params.set(
+      "$expand",
+      "Association"
+    );
 
     const url =
-      `${SPARK_BASE}/accounts` +
-      `?_filter=${encodeURIComponent(filter)}` +
-      `&_limit=25` +
-      `&_expand=Association`;
+      `${RESO_BASE}/Member?${params.toString()}`;
 
     console.log(
-      "ARMLS association test URL:",
+      "ARMLS RESO association test URL:",
       url
     );
 
@@ -197,13 +211,14 @@ export default async function handler(
         .status(502)
         .json({
           success: false,
+
           error:
-            "Spark returned invalid JSON.",
+            "Spark RESO returned invalid JSON.",
 
           raw:
             text.slice(
               0,
-              2000
+              3000
             )
         });
     }
@@ -215,74 +230,78 @@ export default async function handler(
           success: false,
 
           error:
-            data?.D?.Message ||
+            data?.error?.message ||
             data?.message ||
-            "Spark association request failed.",
+            "Spark RESO Member request failed.",
+
+          requestUrl:
+            url,
 
           sparkResponse:
             data
         });
     }
 
+    /*
+      Standard OData responses normally use:
+      {
+        "@odata.context": "...",
+        "value": [ ... ]
+      }
+    */
+
     const results =
       Array.isArray(
-        data?.D?.Results
+        data?.value
       )
-        ? data.D.Results
+        ? data.value
         : [];
-
-    /*
-      For this first test we deliberately return
-      both a simplified view AND the raw account.
-
-      That lets us see exactly how ARMLS/Spark
-      exposes the Association expansion for your
-      particular feed.
-    */
 
     const agents =
       results.map(
-        account => ({
-          id:
-            account?.Id ??
+        member => ({
+          memberKey:
+            member?.MemberKey ??
             null,
 
-          shortId:
-            account?.ShortId ??
+          memberMlsId:
+            member?.MemberMlsId ??
             null,
 
           firstName:
-            account?.FirstName ??
+            member?.MemberFirstName ??
             null,
 
           lastName:
-            account?.LastName ??
+            member?.MemberLastName ??
+            null,
+
+          fullName:
+            member?.MemberFullName ??
             null,
 
           email:
-            account?.Email ??
-            account?.PrimaryEmail ??
+            member?.MemberEmail ??
             null,
 
-          active:
-            account?.Active === true,
-
-          officeId:
-            account?.OfficeId ??
-            account?.Office?.Id ??
+          status:
+            member?.MemberStatus ??
             null,
 
-          officeShortId:
-            account?.OfficeShortId ??
-            account?.Office?.ShortId ??
+          officeKey:
+            member?.OfficeKey ??
             null,
 
-          association:
-            account?.Association ??
+          officeMlsId:
+            member?.OfficeMlsId ??
             null,
+
+          associations:
+            member?.Association ??
+            [],
 
           raw:
-            account
+            member
         })
       );
 
@@ -292,7 +311,10 @@ export default async function handler(
         success: true,
 
         mode:
-          "ARMLS_MEMBER_ASSOCIATION_TEST",
+          "ARMLS_RESO_MEMBER_ASSOCIATION_TEST",
+
+        endpoint:
+          "Version 3 RESO Member",
 
         search: {
           firstName:
@@ -314,12 +336,12 @@ export default async function handler(
         agents,
 
         note:
-          "Read-only test. No BlueVera, Supabase, or ARMLS records were changed."
+          "Read-only RESO Member association test. No BlueVera, Supabase, or ARMLS records were changed."
       });
 
   } catch (error) {
     console.error(
-      "ARMLS association test failed:",
+      "ARMLS RESO association test failed:",
       error
     );
 
@@ -330,7 +352,7 @@ export default async function handler(
 
         error:
           error?.message ||
-          "ARMLS association test failed."
+          "ARMLS RESO association test failed."
       });
   }
 }
