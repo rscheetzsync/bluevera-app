@@ -10,8 +10,11 @@ const SUPABASE_URL =
 const SUPABASE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const TABLE =
+const POOL_TABLE =
   "armls_agent_production_pool";
+
+const HISTORY_TABLE =
+  "armls_agent_sample_history";
 
 
 function clean(value) {
@@ -179,7 +182,7 @@ async function supabaseRequest(
 
 
 /* ============================================================
-   SPARK / ARMLS REQUEST
+   SPARK / ARMLS
 ============================================================ */
 
 async function sparkRequest(
@@ -213,7 +216,7 @@ async function sparkRequest(
 
 
 /* ============================================================
-   PHOENIX REALTORS ASSOCIATION CHECK
+   ASSOCIATION HELPERS
 ============================================================ */
 
 function getAssociationNames(
@@ -253,7 +256,7 @@ function isPhoenixRealtor(
 
 
 /* ============================================================
-   READ REQUEST BODY
+   REQUEST BODY
 ============================================================ */
 
 async function getBody(
@@ -286,7 +289,115 @@ async function getBody(
 
 
 /* ============================================================
-   COUNT CLOSED TRANSACTIONS
+   HISTORY HELPERS
+============================================================ */
+
+async function getHistoryKeys() {
+  const rows =
+    await supabaseRequest(
+      `${HISTORY_TABLE}` +
+      `?select=member_key`,
+      {
+        method:
+          "GET"
+      }
+    );
+
+  const list =
+    Array.isArray(rows)
+      ? rows
+      : [];
+
+  return new Set(
+    list
+      .map(
+        row =>
+          clean(
+            row.member_key
+          )
+      )
+      .filter(Boolean)
+  );
+}
+
+
+async function saveHistory(
+  members
+) {
+  if (!members.length) {
+    return [];
+  }
+
+  const now =
+    new Date()
+      .toISOString();
+
+  const records =
+    members.map(
+      member => ({
+        member_key:
+          clean(
+            member.memberKey
+          ),
+
+        member_mls_id:
+          clean(
+            member.memberMlsId
+          ) ||
+          null,
+
+        full_name:
+          clean(
+            member.fullName
+          ) ||
+          null,
+
+        office_key:
+          clean(
+            member.officeKey
+          ) ||
+          null,
+
+        office_mls_id:
+          clean(
+            member.officeMlsId
+          ) ||
+          null,
+
+        association_name:
+          "Phoenix REALTORS",
+
+        first_sampled_at:
+          now,
+
+        last_sampled_at:
+          now
+      })
+    );
+
+  return supabaseRequest(
+    `${HISTORY_TABLE}` +
+    `?on_conflict=member_key`,
+    {
+      method:
+        "POST",
+
+      headers: {
+        Prefer:
+          "resolution=ignore-duplicates,return=representation"
+      },
+
+      body:
+        JSON.stringify(
+          records
+        )
+    }
+  );
+}
+
+
+/* ============================================================
+   TRANSACTION COUNT
 ============================================================ */
 
 function extractCount(
@@ -383,7 +494,7 @@ export default async function handler(
 
 
     /* ========================================================
-       HEALTH CHECK
+       HEALTH
     ======================================================== */
 
     if (
@@ -428,9 +539,9 @@ export default async function handler(
       req.method === "GET" &&
       mode === "summary"
     ) {
-      const rows =
+      const poolRows =
         await supabaseRequest(
-          `${TABLE}` +
+          `${POOL_TABLE}` +
           `?select=member_key,production_status`,
           {
             method:
@@ -438,20 +549,39 @@ export default async function handler(
           }
         );
 
-      const agents =
-        Array.isArray(rows)
-          ? rows
+      const historyRows =
+        await supabaseRequest(
+          `${HISTORY_TABLE}` +
+          `?select=member_key`,
+          {
+            method:
+              "GET"
+          }
+        );
+
+      const pool =
+        Array.isArray(
+          poolRows
+        )
+          ? poolRows
+          : [];
+
+      const history =
+        Array.isArray(
+          historyRows
+        )
+          ? historyRows
           : [];
 
       const completed =
-        agents.filter(
+        pool.filter(
           row =>
             row.production_status ===
             "complete"
         ).length;
 
       const pending =
-        agents.length -
+        pool.length -
         completed;
 
       return res
@@ -464,17 +594,20 @@ export default async function handler(
             "POOL_SUMMARY",
 
           total:
-            agents.length,
+            pool.length,
 
           completed,
 
-          pending
+          pending,
+
+          historyTotal:
+            history.length
         });
     }
 
 
     /* ========================================================
-       LIST SAVED AGENTS
+       LIST SAVED CURRENT-POOL AGENTS
     ======================================================== */
 
     if (
@@ -491,7 +624,7 @@ export default async function handler(
 
       const rows =
         await supabaseRequest(
-          `${TABLE}` +
+          `${POOL_TABLE}` +
           `?select=*` +
           `&order=closed_transactions_12mo.desc.nullslast,full_name.asc` +
           `&limit=${limit}`,
@@ -525,6 +658,9 @@ export default async function handler(
 
     /* ========================================================
        MEMBER PAGE
+
+       RETURNS ONLY PHOENIX REALTORS WHO HAVE
+       NOT ALREADY BEEN SAMPLED IN HISTORY.
     ======================================================== */
 
     if (
@@ -594,6 +730,9 @@ export default async function handler(
           ? data.value
           : [];
 
+      const historyKeys =
+        await getHistoryKeys();
+
       const phoenixMembers =
         rawMembers
           .filter(
@@ -645,6 +784,14 @@ export default async function handler(
               Boolean(
                 member.memberKey
               )
+          )
+          .filter(
+            member =>
+              !historyKeys.has(
+                clean(
+                  member.memberKey
+                )
+              )
           );
 
       return res
@@ -667,6 +814,19 @@ export default async function handler(
           phoenixCount:
             phoenixMembers.length,
 
+          skippedPreviouslySampled:
+            rawMembers.filter(
+              member =>
+                isPhoenixRealtor(
+                  member
+                ) &&
+                historyKeys.has(
+                  clean(
+                    member?.MemberKey
+                  )
+                )
+            ).length,
+
           nextSkip:
             skip +
             rawMembers.length,
@@ -683,6 +843,10 @@ export default async function handler(
 
     /* ========================================================
        SAVE MEMBERS
+
+       WRITES TO:
+       1. CURRENT PRODUCTION POOL
+       2. PERMANENT SAMPLE HISTORY
     ======================================================== */
 
     if (
@@ -726,12 +890,49 @@ export default async function handler(
           });
       }
 
+      const historyKeys =
+        await getHistoryKeys();
+
+      const newMembers =
+        members.filter(
+          member =>
+            !historyKeys.has(
+              clean(
+                member.memberKey
+              )
+            )
+        );
+
+      if (!newMembers.length) {
+        return res
+          .status(200)
+          .json({
+            success:
+              true,
+
+            mode:
+              "SAVE_MEMBERS",
+
+            received:
+              members.length,
+
+            saved:
+              0,
+
+            skippedHistory:
+              members.length,
+
+            rows:
+              []
+        });
+      }
+
       const now =
         new Date()
           .toISOString();
 
-      const records =
-        members.map(
+      const poolRecords =
+        newMembers.map(
           member => ({
             member_key:
               clean(
@@ -785,9 +986,9 @@ export default async function handler(
           })
         );
 
-      const saved =
+      const savedPool =
         await supabaseRequest(
-          `${TABLE}` +
+          `${POOL_TABLE}` +
           `?on_conflict=member_key`,
           {
             method:
@@ -800,10 +1001,14 @@ export default async function handler(
 
             body:
               JSON.stringify(
-                records
+                poolRecords
               )
           }
         );
+
+      await saveHistory(
+        newMembers
+      );
 
       return res
         .status(200)
@@ -815,26 +1020,33 @@ export default async function handler(
             "SAVE_MEMBERS",
 
           received:
-            records.length,
+            members.length,
 
           saved:
-            Array.isArray(saved)
-              ? saved.length
+            Array.isArray(
+              savedPool
+            )
+              ? savedPool.length
               : 0,
 
+          skippedHistory:
+            members.length -
+            newMembers.length,
+
           rows:
-            Array.isArray(saved)
-              ? saved
+            Array.isArray(
+              savedPool
+            )
+              ? savedPool
               : []
         });
     }
 
 
     /* ========================================================
-       CLEAR ENTIRE SAVED POOL
+       CLEAR CURRENT POOL ONLY
 
-       Requires:
-       POST body = { "confirm": true }
+       HISTORY IS LEFT UNTOUCHED.
     ======================================================== */
 
     if (
@@ -862,7 +1074,7 @@ export default async function handler(
 
       const existing =
         await supabaseRequest(
-          `${TABLE}?select=member_key`,
+          `${POOL_TABLE}?select=member_key`,
           {
             method:
               "GET"
@@ -870,12 +1082,14 @@ export default async function handler(
         );
 
       const deletedCount =
-        Array.isArray(existing)
+        Array.isArray(
+          existing
+        )
           ? existing.length
           : 0;
 
       await supabaseRequest(
-        `${TABLE}` +
+        `${POOL_TABLE}` +
         `?member_key=neq.__bluevera_never_null__`,
         {
           method:
@@ -898,7 +1112,10 @@ export default async function handler(
             "CLEAR_POOL",
 
           deleted:
-            deletedCount
+            deletedCount,
+
+          historyPreserved:
+            true
         });
     }
 
@@ -956,7 +1173,7 @@ export default async function handler(
 
       const pending =
         await supabaseRequest(
-          `${TABLE}` +
+          `${POOL_TABLE}` +
           `?select=*` +
           `&production_status=neq.complete` +
           `&order=created_at.asc` +
@@ -1014,7 +1231,7 @@ export default async function handler(
             );
 
           await supabaseRequest(
-            `${TABLE}` +
+            `${POOL_TABLE}` +
             `?member_key=eq.${encodeURIComponent(
               agent.member_key
             )}`,
@@ -1072,7 +1289,7 @@ export default async function handler(
             "Production count failed.";
 
           await supabaseRequest(
-            `${TABLE}` +
+            `${POOL_TABLE}` +
             `?member_key=eq.${encodeURIComponent(
               agent.member_key
             )}`,
