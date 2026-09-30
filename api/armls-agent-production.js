@@ -37,9 +37,7 @@ function safeInteger(
   const number =
     Number(value);
 
-  if (
-    !Number.isInteger(number)
-  ) {
+  if (!Number.isInteger(number)) {
     return fallback;
   }
 
@@ -96,9 +94,7 @@ async function fetchJson(
     );
   }
 
-  if (
-    !response.ok
-  ) {
+  if (!response.ok) {
     throw new Error(
       data?.D?.Message ||
       data?.error?.message ||
@@ -119,17 +115,13 @@ async function supabaseRequest(
   path,
   options = {}
 ) {
-  if (
-    !SUPABASE_URL
-  ) {
+  if (!SUPABASE_URL) {
     throw new Error(
       "SUPABASE_URL is missing."
     );
   }
 
-  if (
-    !SUPABASE_KEY
-  ) {
+  if (!SUPABASE_KEY) {
     throw new Error(
       "SUPABASE_SERVICE_ROLE_KEY is missing."
     );
@@ -172,9 +164,7 @@ async function supabaseRequest(
     }
   }
 
-  if (
-    !response.ok
-  ) {
+  if (!response.ok) {
     throw new Error(
       `Supabase ${response.status}: ${
         typeof data === "string"
@@ -432,9 +422,6 @@ export default async function handler(
 
     /* ========================================================
        SUMMARY
-
-       DOES NOT CALL ARMLS.
-       ONLY CHECKS SUPABASE.
     ======================================================== */
 
     if (
@@ -488,8 +475,6 @@ export default async function handler(
 
     /* ========================================================
        LIST SAVED AGENTS
-
-       DOES NOT CALL ARMLS.
     ======================================================== */
 
     if (
@@ -540,11 +525,6 @@ export default async function handler(
 
     /* ========================================================
        MEMBER PAGE
-
-       SMALL 25-MEMBER ARMLS/RESO REQUEST.
-
-       RETURNS ONLY PHOENIX REALTORS MEMBERS.
-       DOES NOT WRITE TO SUPABASE.
     ======================================================== */
 
     if (
@@ -703,11 +683,6 @@ export default async function handler(
 
     /* ========================================================
        SAVE MEMBERS
-
-       SAVES ONLY MEMBERS ALREADY VERIFIED AS
-       PHOENIX REALTORS BY MEMBER-PAGE.
-
-       NO ARMLS REQUEST IS MADE HERE.
     ======================================================== */
 
     if (
@@ -739,9 +714,7 @@ export default async function handler(
             25
           );
 
-      if (
-        !members.length
-      ) {
+      if (!members.length) {
         return res
           .status(400)
           .json({
@@ -858,11 +831,80 @@ export default async function handler(
 
 
     /* ========================================================
-       CALCULATE PRODUCTION
+       CLEAR ENTIRE SAVED POOL
 
-       READS A SMALL BATCH FROM SUPABASE,
-       CALCULATES TRANSACTIONS,
-       THEN SAVES EACH RESULT.
+       Requires:
+       POST body = { "confirm": true }
+    ======================================================== */
+
+    if (
+      req.method === "POST" &&
+      mode === "clear-pool"
+    ) {
+      const body =
+        await getBody(
+          req
+        );
+
+      if (
+        body?.confirm !== true
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Confirmation is required to clear the pool."
+          });
+      }
+
+      const existing =
+        await supabaseRequest(
+          `${TABLE}?select=member_key`,
+          {
+            method:
+              "GET"
+          }
+        );
+
+      const deletedCount =
+        Array.isArray(existing)
+          ? existing.length
+          : 0;
+
+      await supabaseRequest(
+        `${TABLE}` +
+        `?member_key=neq.__bluevera_never_null__`,
+        {
+          method:
+            "DELETE",
+
+          headers: {
+            Prefer:
+              "return=minimal"
+          }
+        }
+      );
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          mode:
+            "CLEAR_POOL",
+
+          deleted:
+            deletedCount
+        });
+    }
+
+
+    /* ========================================================
+       CALCULATE PRODUCTION
     ======================================================== */
 
     if (
@@ -932,9 +974,7 @@ export default async function handler(
           ? pending
           : [];
 
-      if (
-        !rows.length
-      ) {
+      if (!rows.length) {
         return res
           .status(200)
           .json({
