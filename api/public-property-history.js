@@ -48,6 +48,8 @@ function activeEntry(entry) {
     entry?.verification_status
   ).toLowerCase();
 
+  const lifecycleStatus = clean(entry?.status).toLowerCase();
+  if (["deleted", "archived", "rejected", "removed", "inactive"].includes(lifecycleStatus)) return false;
   return ![
     "deleted",
     "archived",
@@ -82,6 +84,8 @@ function readableStatus(value) {
   const status = clean(value)
     .toLowerCase()
     .replace(/[_-]+/g, " ");
+
+  if (/^(unverified|not verified|unverified_claim)$/.test(status)) return "Unverified";
 
   if (
     status.includes("verified")
@@ -223,6 +227,7 @@ function publicTimelineEntry(entry) {
   return {
     id:
       entry.id,
+    homeowner_update_id: entry.homeowner_update_id || null,
 
     title:
       safeText(
@@ -694,10 +699,7 @@ function dedupeHomeownerEntries(entries) {
         "homeowner update"
       );
 
-    const key =
-      system && year
-        ? `semantic:${system}|${year}`
-        : `semantic:${fallbackLabel}|${year}`;
+    const key = clean(entry.id) ? `record:${clean(entry.id)}` : `semantic:${fallbackLabel}|${year}|${clean(entry.statement)}`;
 
     const existing =
       semanticGroups.get(key);
@@ -1049,9 +1051,7 @@ export default async function handler(
             maintenanceRecords.length
         },
 
-        evidenceCounts:
-          result.evidenceCounts ||
-          {},
+        evidenceCounts: { ...(result.evidenceCounts || {}), homeownerUpdates: homeownerUpdates.length },
 
         timeline,
         homeownerUpdates,
