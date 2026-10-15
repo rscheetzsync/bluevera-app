@@ -1,12 +1,10 @@
 
- // BlueVera ARMLS closed-listing diagnostic.
- // READ ONLY. Protect with a separate diagnostic key.
-
-export const config = { api: { bodyParser: false } };
+ // BlueVera ZIP-code sold-history diagnostic.
+ // Read only; no Supabase writes.
 
 const BASE = 'https://replication.sparkapi.com/v1';
 
-const LABELS = {
+const FIELDS = {
   floor: ['Floor Yr Updated', 'Floor Partial/Full'],
   wiring: ['Wiring Yr Updated', 'Wiring Partial/Full'],
   plumbing: ['Plmbg Yr Updated', 'Plmbg Partial/Full'],
@@ -18,35 +16,38 @@ const LABELS = {
   pool: ['Pool Yr Updated', 'Pool Partial/Full']
 };
 
-function findDeep(obj, name) {
+function deep(obj, key) {
   if (!obj || typeof obj !== 'object') return null;
 
-  if (Object.prototype.hasOwnProperty.call(obj, name)) {
-    return obj[name];
+  if (Object.prototype.hasOwnProperty.call(obj, key)) {
+    return obj[key];
   }
 
-  for (const val of Object.values(obj)) {
-    const result = findDeep(val, name);
+  for (const value of Object.values(obj)) {
+    const hit = deep(value, key);
 
-    if (result !== null && result !== undefined) {
-      return result;
+    if (hit !== null && hit !== undefined) {
+      return hit;
     }
   }
 
   return null;
 }
 
-function readUpdates(custom) {
+function improvements(custom) {
   const result = {};
 
-  for (const [category, labels] of Object.entries(LABELS)) {
-    const yearRaw = findDeep(custom, labels[0]);
-    const year = Number(yearRaw);
-    const scope = findDeep(custom, labels[1]);
+  for (const [category, [yearLabel, scopeLabel]]
+    of Object.entries(FIELDS)) {
+
+    const raw = deep(custom, yearLabel);
+    const year = Number(raw);
+    const scope = deep(custom, scopeLabel);
 
     if (
-      yearRaw != null &&
-      String(yearRaw).trim() !== '' &&
+      raw !== null &&
+      raw !== undefined &&
+      String(raw).trim() !== '' &&
       Number.isInteger(year) &&
       year >= 1800 &&
       year <= 2027
@@ -63,15 +64,15 @@ function readUpdates(custom) {
   return result;
 }
 
-function numberOrNull(v) {
-  return v == null ||
-    v === '' ||
-    !Number.isFinite(Number(v))
+function numeric(value) {
+  return value == null ||
+    value === '' ||
+    !Number.isFinite(Number(value))
       ? null
-      : Number(v);
+      : Number(value);
 }
 
-function fmtAddress(f) {
+function address(f) {
   return f.UnparsedAddress ||
     [
       f.StreetNumber,
@@ -84,7 +85,10 @@ function fmtAddress(f) {
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'private, no-store');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader(
+    'Content-Type',
+    'application/json; charset=utf-8'
+  );
 
   if (req.method !== 'GET') {
     return res.status(405).json({
@@ -93,182 +97,170 @@ export default async function handler(req, res) {
     });
   }
 
-  const secret = process.env.BLUEVERA_SOLD_DIAGNOSTIC_KEY;
+  const secret =
+    process.env.BLUEVERA_SOLD_DIAGNOSTIC_KEY;
 
   if (!secret) {
     return res.status(503).json({
       success: false,
-      error: 'Set BLUEVERA_SOLD_DIAGNOSTIC_KEY in Vercel before using this private diagnostic.'
+      error:
+        'Configure BLUEVERA_SOLD_DIAGNOSTIC_KEY in Vercel.'
     });
   }
 
-  if (req.headers['x-bluevera-diagnostic-key'] !== secret) {
+  if (
+    req.headers['x-bluevera-diagnostic-key'] !== secret
+  ) {
     return res.status(403).json({
       success: false,
-      error: 'Invalid diagnostic key'
+      error: 'Invalid diagnostic key.'
     });
   }
 
-  if (!process.env.SPARK_ACCESS_TOKEN) {
+  const token = process.env.SPARK_ACCESS_TOKEN;
+
+  if (!token) {
     return res.status(503).json({
       success: false,
-      error: 'SPARK_ACCESS_TOKEN is missing'
+      error: 'SPARK_ACCESS_TOKEN is missing.'
     });
   }
 
-  const rawLimit = Number(req.query.limit || 25);
-  const rawPage = Number(req.query.page || 1);
+  const zip = String(req.query.zip || '').trim();
+  const limit = Number(req.query.limit || 25);
+  const page = Number(req.query.page || 1);
+
+  if (!/^\d{5}$/.test(zip)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Enter a five-digit ZIP code.'
+    });
+  }
 
   if (
-    ![25, 50, 100].includes(rawLimit) ||
-    !Number.isInteger(rawPage) ||
-    rawPage < 1 ||
-    rawPage > 1000
+    ![25, 50, 100].includes(limit) ||
+    !Number.isInteger(page) ||
+    page < 1 ||
+    page > 1000
   ) {
     return res.status(400).json({
       success: false,
-      error: 'Invalid page or batch size'
+      error: 'Invalid batch size or page.'
     });
   }
 
-  // Approximate map extent.
-  // Bounds are editable on the diagnostic page.
-
-  const south = Number(req.query.south ?? 33.4680);
-  const north = Number(req.query.north ?? 33.4810);
-  const west = Number(req.query.west ?? -112.0830);
-  const east = Number(req.query.east ?? -112.0460);
-
-  if (
-    ![south, north, west, east].every(Number.isFinite) ||
-    south >= north ||
-    west >= east ||
-    north - south > .12 ||
-    east - west > .12 ||
-    south < 33.35 ||
-    north > 33.65 ||
-    west < -112.25 ||
-    east > -111.85
-  ) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid Phoenix area bounds.'
-    });
-  }
+  // ARMLS Spark closed-listing ZIP filter.
+  // Verify filter compatibility during the first live test.
 
   const filter =
     `StandardStatus Eq 'Closed' ` +
+    `And PostalCode Eq '${zip}' ` +
     `And CloseDate Ge 2016-10-14 ` +
-    `And CloseDate Le 2026-10-14 ` +
-    `And Location Eq rectangle('${north} ${west},${south} ${east}')`;
+    `And CloseDate Le 2026-10-14`;
 
-  const query = new URLSearchParams({
+  const q = new URLSearchParams({
     _filter: filter,
-    _limit: String(rawLimit),
-    _page: String(rawPage),
+    _limit: String(limit),
+    _page: String(page),
     _expand: 'CustomFields'
   });
 
   try {
-    const response = await fetch(
-      `${BASE}/listings?${query}`,
+    const upstream = await fetch(
+      `${BASE}/listings?${q}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.SPARK_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${token}`,
           Accept: 'application/json'
         },
         signal: AbortSignal.timeout(24000)
       }
     );
 
-    const text = await response.text();
-
-    let payload;
+    const body = await upstream.text();
+    let data;
 
     try {
-      payload = JSON.parse(text);
+      data = JSON.parse(body);
     } catch {
       return res.status(502).json({
         success: false,
-        error: 'Spark returned non-JSON',
-        status: response.status
+        error: 'Spark returned non-JSON.',
+        sparkStatus: upstream.status
       });
     }
 
-    if (!response.ok || payload?.D?.Success === false) {
+    if (
+      !upstream.ok ||
+      data?.D?.Success === false
+    ) {
       return res.status(502).json({
         success: false,
         error:
-          payload?.D?.Message ||
-          payload?.message ||
-          'Spark query failed',
-        sparkStatus: response.status
+          data?.D?.Message ||
+          data?.message ||
+          'Spark query rejected.',
+        sparkStatus: upstream.status
       });
     }
 
-    const raw = Array.isArray(payload?.D?.Results)
-      ? payload.D.Results
+    const raw = Array.isArray(data?.D?.Results)
+      ? data.D.Results
       : [];
 
-    const rows = raw.map(rec => {
-      const f = rec.StandardFields || rec;
+    const rows = raw.map(record => {
+      const f = record.StandardFields || record;
 
-      const updates = readUpdates(
-        rec.CustomFields ||
+      const updates = improvements(
+        record.CustomFields ||
         f.CustomFields ||
         {}
       );
 
       return {
         mls: f.ListingId || f.MlsId || null,
-        listingKey: f.ListingKey || rec.Id || null,
-        address: fmtAddress(f),
-        city: f.City || null,
-        status: f.StandardStatus || f.MlsStatus || null,
+        listingKey: f.ListingKey || record.Id || null,
+        address: address(f),
+        zip: f.PostalCode || null,
+        status:
+          f.StandardStatus ||
+          f.MlsStatus ||
+          null,
         closeDate: f.CloseDate || null,
-        closePrice: numberOrNull(f.ClosePrice),
-        latitude: numberOrNull(f.Latitude),
-        longitude: numberOrNull(f.Longitude),
+        closePrice: numeric(f.ClosePrice),
         updates,
         updateCount: Object.keys(updates).length
       };
     });
 
-    const categories = Object.fromEntries(
-      Object.keys(LABELS).map(k => [
-        k,
-        rows.filter(r => r.updates[k]).length
-      ])
-    );
-
     return res.status(200).json({
       success: true,
-      mode: 'CLOSED_HISTORY_READ_ONLY',
-      dates: {
-        from: '2016-10-14',
-        to: '2026-10-14'
-      },
-      bounds: {
-        south,
-        north,
-        west,
-        east
-      },
-      page: rawPage,
-      limit: rawLimit,
+      mode: 'SOLD_ZIP_HISTORY_READ_ONLY',
+      zip,
+      page,
+      limit,
+      from: '2016-10-14',
+      to: '2026-10-14',
       fetched: rows.length,
       matchedUpdates: rows.filter(
-        r => r.updateCount
+        x => x.updateCount > 0
       ).length,
-      categoryCounts: categories,
-      hasNextPage: raw.length === rawLimit,
+      categoryCounts: Object.fromEntries(
+        Object.keys(FIELDS).map(k => [
+          k,
+          rows.filter(x => x.updates[k]).length
+        ])
+      ),
+      hasNextPage: raw.length === limit,
       rows
     });
 
-  } catch (e) {
+  } catch (error) {
     return res.status(502).json({
       success: false,
-      error: e?.message || 'Spark request failed'
+      error:
+        error?.message ||
+        'Spark request failed.'
     });
   }
 }
