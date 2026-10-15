@@ -1,9 +1,13 @@
-// BlueVera ARMLS sold history
-// GET = read-only
-// POST ?mls= = save one closed listing
-// Deploy as api/armls-sold-history-test.js
+
+ // BlueVera ARMLS sold history
+// Five-year, read-only admin diagnostic.
+// Deploy to: api/armls-sold-history-test.js
+// Browser must send Authorization: Bearer <Supabase access token>.
+// NEVER expose Supabase service-role or Spark credentials in browser code.
 
 const BASE = 'https://replication.sparkapi.com/v1';
+const START_DATE = '2021-10-15';
+const END_DATE = '2026-10-15';
 
 const CATEGORIES = {
   flooring: ['Floor Yr Updated', 'Floor Partial/Full'],
@@ -17,31 +21,15 @@ const CATEGORIES = {
   pool: ['Pool Yr Updated', 'Pool Partial/Full']
 };
 
-function deep(obj, key) {
-  if (!obj || typeof obj !== 'object') return null;
+const normalizeEmail = v =>
+  String(v ?? '').trim().toLowerCase();
 
-  if (Object.prototype.hasOwnProperty.call(obj, key)) {
-    return obj[key];
-  }
-
-  for (const value of Object.values(obj)) {
-    const found = deep(value, key);
-
-    if (found !== null && found !== undefined) {
-      return found;
-    }
-  }
-
-  return null;
-}
-
-function text(v) {
-  return v == null || String(v).trim() === ''
+const stringOrNull = v =>
+  v == null || String(v).trim() === ''
     ? null
     : String(v).trim();
-}
 
-function number(v) {
+function numberOrNull(v) {
   return v == null ||
     v === '' ||
     !Number.isFinite(Number(v))
@@ -49,9 +37,8 @@ function number(v) {
       : Number(v);
 }
 
-function year(v) {
-  const n = number(v);
-
+function yearOrNull(v) {
+  const n = numberOrNull(v);
   return Number.isInteger(n) &&
     n >= 1800 &&
     n <= 2027
@@ -59,26 +46,40 @@ function year(v) {
       : null;
 }
 
-function date(v) {
-  const s = text(v);
-
+function dateOrNull(v) {
+  const s = stringOrNull(v);
   return s && /^\d{4}-\d{2}-\d{2}/.test(s)
     ? s.slice(0, 10)
     : null;
 }
 
+function deepFind(obj, key) {
+  if (!obj || typeof obj !== 'object') return null;
+
+  if (Object.prototype.hasOwnProperty.call(obj, key)) {
+    return obj[key];
+  }
+
+  for (const value of Object.values(obj)) {
+    const hit = deepFind(value, key);
+    if (hit != null) return hit;
+  }
+
+  return null;
+}
+
 function address(f) {
-  return text(f.UnparsedAddress) || text([
-    f.StreetNumber,
-    f.StreetDirPrefix,
-    f.StreetName,
-    f.StreetSuffix
-  ].filter(Boolean).join(' '));
+  return stringOrNull(f.UnparsedAddress) ||
+    stringOrNull([
+      f.StreetNumber,
+      f.StreetDirPrefix,
+      f.StreetName,
+      f.StreetSuffix
+    ].filter(Boolean).join(' '));
 }
 
 function normalize(record) {
   const f = record.StandardFields || record;
-
   const custom =
     record.CustomFields ||
     f.CustomFields ||
@@ -86,53 +87,56 @@ function normalize(record) {
 
   const updates = {};
 
-  for (const [category, [yearLabel, scopeLabel]]
+  for (const [name, [yearLabel, scopeLabel]]
     of Object.entries(CATEGORIES)) {
 
-    const y = year(deep(custom, yearLabel));
+    const year = yearOrNull(
+      deepFind(custom, yearLabel)
+    );
 
-    const scope = text(deep(custom, scopeLabel));
+    const scope = stringOrNull(
+      deepFind(custom, scopeLabel)
+    );
 
-    if (y !== null || scope !== null) {
-      updates[category] = {
-        year: y,
-        scope
-      };
+    if (year != null || scope != null) {
+      updates[name] = { year, scope };
     }
   }
 
   return {
-    mls: text(f.ListingId || f.MlsId),
+    mls: stringOrNull(f.ListingId || f.MlsId),
 
-    listingKey: text(f.ListingKey || record.Id),
+    listingKey:
+      stringOrNull(f.ListingKey || record.Id),
 
     address: address(f),
 
-    city: text(f.City),
+    city: stringOrNull(f.City),
 
-    state: text(f.StateOrProvince),
+    state: stringOrNull(f.StateOrProvince),
 
-    zip: text(f.PostalCode),
+    zip: stringOrNull(f.PostalCode),
 
-    parcel: text(f.ParcelNumber || f.TaxParcelId),
+    parcel:
+      stringOrNull(f.ParcelNumber || f.TaxParcelId),
 
-    propertyType: text(f.PropertyType),
+    propertyType: stringOrNull(f.PropertyType),
 
-    yearBuilt: year(f.YearBuilt),
+    yearBuilt: yearOrNull(f.YearBuilt),
 
-    sqft: number(
+    sqft: numberOrNull(
       f.LivingArea || f.BuildingAreaTotal
     ),
 
-    status: text(
+    status: stringOrNull(
       f.StandardStatus || f.MlsStatus
     ),
 
-    closeDate: date(f.CloseDate),
+    closeDate: dateOrNull(f.CloseDate),
 
-    closePrice: number(f.ClosePrice),
+    closePrice: numberOrNull(f.ClosePrice),
 
-    remarks: text(f.PublicRemarks),
+    remarks: stringOrNull(f.PublicRemarks),
 
     updates,
 
@@ -140,8 +144,140 @@ function normalize(record) {
   };
 }
 
-async function fetchSpark(params, token) {
-  const upstream = await fetch(
+// Verify the existing Supabase admin login.
+
+async function requireAdmin(req) {
+  const bearer = /^Bearer\s+(.+)$/i.exec(
+    String(req.headers.authorization || '')
+  );
+
+  if (!bearer) {
+    return {
+      status: 401,
+      error:
+        'Missing Supabase admin access token. Please sign in again.'
+    };
+  }
+
+  const base = String(
+    process.env.SUPABASE_URL || ''
+  ).replace(/\/$/, '');
+
+  const serviceKey =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!base || !serviceKey) {
+    return {
+      status: 503,
+      error:
+        'Supabase admin verification environment variables are missing.'
+    };
+  }
+
+  // Validate the user token with Supabase Auth.
+  // Do not trust browser session flags.
+
+  const identity = await fetch(
+    `${base}/auth/v1/user`,
+    {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${bearer[1]}`
+      },
+
+      signal: AbortSignal.timeout(10000)
+    }
+  );
+
+  if (!identity.ok) {
+    return {
+      status: 401,
+      error:
+        'Supabase admin session is invalid or expired. Please log in again.'
+    };
+  }
+
+  const user = await identity.json();
+
+  if (!user?.id || !normalizeEmail(user.email)) {
+    return {
+      status: 401,
+      error:
+        'Supabase did not return a valid user identity.'
+    };
+  }
+
+  // Retrieve the small approved-admin list and
+  // compare normalized email addresses.
+
+  const query = new URLSearchParams({
+    select: 'email,role,is_active',
+    is_active: 'eq.true',
+    limit: '100'
+  });
+
+  const response = await fetch(
+    `${base}/rest/v1/admin_users?${query}`,
+    {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`
+      },
+
+      signal: AbortSignal.timeout(10000)
+    }
+  );
+
+  if (!response.ok) {
+    return {
+      status: 503,
+      error:
+        `Supabase admin_users lookup failed (HTTP ${response.status}). Verify SUPABASE_URL and service-role key.`
+    };
+  }
+
+  const admins = await response.json();
+
+  if (!Array.isArray(admins)) {
+    return {
+      status: 503,
+      error:
+        'Unexpected response from admin_users lookup.'
+    };
+  }
+
+  const approved = admins.some(a =>
+    a.is_active === true &&
+    normalizeEmail(a.email) ===
+      normalizeEmail(user.email) &&
+    ['admin', 'super_admin'].includes(
+      String(a.role || '').trim().toLowerCase()
+    )
+  );
+
+  if (!approved) {
+    return {
+      status: 403,
+      error:
+        'Signed-in Supabase user is not matched to an active admin_users account. Verify you logged into the same Supabase project configured for bluevera-app.'
+    };
+  }
+
+  return { ok: true };
+}
+
+// Retrieve listings from Spark ARMLS.
+
+async function fetchSpark(params) {
+  const token = process.env.SPARK_ACCESS_TOKEN;
+
+  if (!token) {
+    throw new Error(
+      'SPARK_ACCESS_TOKEN is missing in Vercel.'
+    );
+  }
+
+  const response = await fetch(
     `${BASE}/listings?${params}`,
     {
       headers: {
@@ -153,132 +289,32 @@ async function fetchSpark(params, token) {
     }
   );
 
-  const data = await upstream.json()
+  const json = await response.json()
     .catch(() => null);
 
-  if (!data) {
+  if (!json) {
     throw new Error(
-      `Spark returned invalid JSON (HTTP ${upstream.status}).`
+      `Spark returned invalid JSON (HTTP ${response.status}).`
     );
   }
 
   if (
-    !upstream.ok ||
-    data?.D?.Success === false
+    !response.ok ||
+    json?.D?.Success === false
   ) {
     throw new Error(
-      data?.D?.Message ||
-      data?.message ||
-      `Spark rejected query (HTTP ${upstream.status}).`
+      json?.D?.Message ||
+      json?.message ||
+      `Spark query rejected (HTTP ${response.status}).`
     );
   }
 
-  return Array.isArray(data?.D?.Results)
-    ? data.D.Results
+  return Array.isArray(json?.D?.Results)
+    ? json.D.Results
     : [];
 }
 
-function dbRecord(row, original) {
-  const payload = {
-    mls_number: row.mls,
-
-    listing_key: row.listingKey,
-
-    property_address: row.address,
-
-    city: row.city,
-
-    state: row.state,
-
-    zip_code: row.zip,
-
-    parcel_number: row.parcel,
-
-    property_type: row.propertyType,
-
-    year_built: row.yearBuilt,
-
-    living_area_sqft: row.sqft,
-
-    sold_date: row.closeDate,
-
-    sold_price: row.closePrice,
-
-    listing_status: row.status,
-
-    listing_remarks: row.remarks,
-
-    updated_at: new Date().toISOString(),
-
-    // Store original data only if ARMLS
-    // licensing permits historical storage.
-    raw_armls_data: original
-  };
-
-  for (const [category, data]
-    of Object.entries(row.updates)) {
-
-    payload[category] = data.scope;
-
-    payload[`${category}_year`] = data.year;
-  }
-
-  return payload;
-}
-
-async function saveOne(row, original) {
-  const url = process.env.SUPABASE_URL;
-
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url || !key) {
-    throw new Error(
-      'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in Vercel.'
-    );
-  }
-
-  const response = await fetch(
-    `${url.replace(/\/$/, '')}/rest/v1/armls_sold_properties?on_conflict=mls_number`,
-    {
-      method: 'POST',
-
-      headers: {
-        apikey: key,
-
-        Authorization: `Bearer ${key}`,
-
-        'Content-Type': 'application/json',
-
-        Prefer:
-          'resolution=merge-duplicates,return=representation'
-      },
-
-      body: JSON.stringify(
-        dbRecord(row, original)
-      ),
-
-      signal: AbortSignal.timeout(15000)
-    }
-  );
-
-  const result = await response.json()
-    .catch(() => null);
-
-  if (!response.ok) {
-    throw new Error(
-      `Supabase save failed (${response.status}): ${
-        result?.message ||
-        result?.details ||
-        'Unknown error'
-      }`
-    );
-  }
-
-  return Array.isArray(result) && result[0]
-    ? result[0].id
-    : null;
-}
+// Main API handler.
 
 export default async function handler(req, res) {
   res.setHeader(
@@ -291,55 +327,50 @@ export default async function handler(req, res) {
     'application/json; charset=utf-8'
   );
 
-  if (!['GET', 'POST'].includes(req.method)) {
+  // No database writes permitted.
+
+  if (req.method !== 'GET') {
     return res.status(405).json({
       success: false,
-      error: 'GET or POST only.'
+      error: 'Read-only: GET only.'
     });
   }
-
-  const secret =
-    process.env.BLUEVERA_SOLD_DIAGNOSTIC_KEY;
-
-  if (!secret) {
-    return res.status(503).json({
-      success: false,
-      error: 'Missing BLUEVERA_SOLD_DIAGNOSTIC_KEY.'
-    });
-  }
-
-  if (
-    req.headers['x-bluevera-diagnostic-key'] !== secret
-  ) {
-    return res.status(403).json({
-      success: false,
-      error: 'Invalid diagnostic key.'
-    });
-  }
-
-  const token =
-    process.env.SPARK_ACCESS_TOKEN;
-
-  if (!token) {
-    return res.status(503).json({
-      success: false,
-      error: 'Missing SPARK_ACCESS_TOKEN.'
-    });
-  }
-
-  const mls =
-    String(req.query.mls || '').trim();
 
   try {
-    // ----------------------------------
-    // SINGLE SOLD PROPERTY LOOKUP
-    // ----------------------------------
+    const admin = await requireAdmin(req);
+
+    if (!admin.ok) {
+      return res.status(admin.status).json({
+        success: false,
+        error: admin.error
+      });
+    }
+
+  } catch (err) {
+    console.error(
+      'Sold history admin authorization failed:',
+      err?.message
+    );
+
+    return res.status(503).json({
+      success: false,
+      error:
+        'Admin verification request failed. Check Vercel function logs.'
+    });
+  }
+
+  try {
+    const mls = String(
+      req.query?.mls || ''
+    ).trim();
+
+    // Single closed MLS listing.
 
     if (mls) {
       if (!/^\d{5,12}$/.test(mls)) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid numeric MLS number.'
+          error: 'Invalid MLS number.'
         });
       }
 
@@ -349,91 +380,54 @@ export default async function handler(req, res) {
         _expand: 'CustomFields'
       });
 
-      const results = await fetchSpark(
-        params,
-        token
-      );
+      const result = (
+        await fetchSpark(params)
+      )[0];
 
-      if (!results.length) {
+      if (!result) {
         return res.status(404).json({
           success: false,
-          error: `MLS ${mls} not returned by Spark.`
+          error:
+            `MLS ${mls} not returned by Spark.`
         });
       }
 
-      const row = normalize(results[0]);
+      const row = normalize(result);
 
-      const closed =
-        row.status?.toLowerCase() === 'closed';
-
-      if (!closed) {
-        return res.status(200).json({
-          success: true,
-          isClosed: false,
-          mls,
-          status: row.status,
-          row: null,
-          saved: false
-        });
-      }
-
-      if (req.method === 'POST') {
-        if (!row.mls) {
-          return res.status(422).json({
-            success: false,
-            error: 'MLS ID missing in Spark response.'
-          });
-        }
-
-        const id = await saveOne(
-          row,
-          results[0]
-        );
-
-        return res.status(200).json({
-          success: true,
-          mode: 'SOLD_SINGLE_SAVED',
-          isClosed: true,
-          saved: true,
-          id,
-          row
-        });
-      }
+      const isClosed =
+        String(row.status || '').toLowerCase() ===
+        'closed';
 
       return res.status(200).json({
         success: true,
         mode: 'SOLD_SINGLE_READ_ONLY',
-        isClosed: true,
+        mls,
+        isClosed,
+        status: row.status,
         saved: false,
-        row
+        row: isClosed ? row : null
       });
     }
 
-    // ----------------------------------
-    // ZIP CODE SOLD HISTORY LOOKUP
-    // ----------------------------------
+    // Five-year sold-property ZIP search.
 
-    if (req.method === 'POST') {
-      return res.status(400).json({
-        success: false,
-        error:
-          'POST requires a single MLS number. ZIP batches remain read-only.'
-      });
-    }
+    const zip = String(
+      req.query?.zip || ''
+    ).trim();
 
-    const zip =
-      String(req.query.zip || '').trim();
+    const limit = Number(
+      req.query?.limit ?? 25
+    );
 
-    const limit =
-      Number(req.query.limit || 25);
-
-    const page =
-      Number(req.query.page || 1);
+    const page = Number(
+      req.query?.page ?? 1
+    );
 
     if (!/^\d{5}$/.test(zip)) {
       return res.status(400).json({
         success: false,
-        error: 'Enter a five-digit ZIP code.'
+        error:
+          'Enter a five-digit ZIP code.'
       });
     }
 
@@ -445,16 +439,16 @@ export default async function handler(req, res) {
     ) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid batch size or page.'
+        error:
+          'Invalid batch size or page.'
       });
     }
 
-    // Ten-year sold-listing filter
     const filter =
       `StandardStatus Eq 'Closed' ` +
       `And PostalCode Eq '${zip}' ` +
-      `And CloseDate Ge 2016-10-14 ` +
-      `And CloseDate Le 2026-10-14`;
+      `And CloseDate Ge ${START_DATE} ` +
+      `And CloseDate Le ${END_DATE}`;
 
     const params = new URLSearchParams({
       _filter: filter,
@@ -463,19 +457,9 @@ export default async function handler(req, res) {
       _expand: 'CustomFields'
     });
 
-    const records = await fetchSpark(
-      params,
-      token
-    );
-
-    const rows = records.map(normalize);
-
-    const categoryCounts = Object.fromEntries(
-      Object.keys(CATEGORIES).map(k => [
-        k,
-        rows.filter(r => r.updates[k]).length
-      ])
-    );
+    const rows = (
+      await fetchSpark(params)
+    ).map(normalize);
 
     return res.status(200).json({
       success: true,
@@ -488,31 +472,45 @@ export default async function handler(req, res) {
 
       limit,
 
-      from: '2016-10-14',
+      from: START_DATE,
 
-      to: '2026-10-14',
+      to: END_DATE,
 
       fetched: rows.length,
 
       matchedUpdates:
         rows.filter(
-          r => r.updateCount > 0
+          row => row.updateCount > 0
         ).length,
 
-      categoryCounts,
+      categoryCounts:
+        Object.fromEntries(
+          Object.keys(CATEGORIES).map(k => [
+            k,
+            rows.filter(
+              row => row.updates[k]
+            ).length
+          ])
+        ),
 
-      hasNextPage:
-        rows.length === limit,
+      // Only an estimate until total-count
+      // pagination is independently verified.
+      hasNextPage: rows.length === limit,
 
       rows
     });
 
-  } catch (error) {
+  } catch (err) {
+    console.error(
+      'Sold history Spark lookup failed:',
+      err?.message
+    );
+
     return res.status(502).json({
       success: false,
       error:
-        error?.message ||
-        'Sold history request failed.'
+        err?.message ||
+        'Spark lookup failed.'
     });
   }
 }
