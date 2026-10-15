@@ -39,6 +39,7 @@ function numberOrNull(v) {
 
 function yearOrNull(v) {
   const n = numberOrNull(v);
+
   return Number.isInteger(n) &&
     n >= 1800 &&
     n <= 2027
@@ -48,6 +49,7 @@ function yearOrNull(v) {
 
 function dateOrNull(v) {
   const s = stringOrNull(v);
+
   return s && /^\d{4}-\d{2}-\d{2}/.test(s)
     ? s.slice(0, 10)
     : null;
@@ -62,6 +64,7 @@ function deepFind(obj, key) {
 
   for (const value of Object.values(obj)) {
     const hit = deepFind(value, key);
+
     if (hit != null) return hit;
   }
 
@@ -80,6 +83,7 @@ function address(f) {
 
 function normalize(record) {
   const f = record.StandardFields || record;
+
   const custom =
     record.CustomFields ||
     f.CustomFields ||
@@ -144,7 +148,7 @@ function normalize(record) {
   };
 }
 
-// Verify the existing Supabase admin login.
+// Verify existing BlueVera administrator login.
 
 async function requireAdmin(req) {
   const bearer = /^Bearer\s+(.+)$/i.exec(
@@ -173,9 +177,6 @@ async function requireAdmin(req) {
         'Supabase admin verification environment variables are missing.'
     };
   }
-
-  // Validate the user token with Supabase Auth.
-  // Do not trust browser session flags.
 
   const identity = await fetch(
     `${base}/auth/v1/user`,
@@ -206,9 +207,6 @@ async function requireAdmin(req) {
         'Supabase did not return a valid user identity.'
     };
   }
-
-  // Retrieve the small approved-admin list and
-  // compare normalized email addresses.
 
   const query = new URLSearchParams({
     select: 'email,role,is_active',
@@ -266,10 +264,15 @@ async function requireAdmin(req) {
   return { ok: true };
 }
 
-// Retrieve listings from Spark ARMLS.
+// Retrieve listings and pagination information
+// from Spark ARMLS.
 
-async function fetchSpark(params) {
-  const token = process.env.SPARK_ACCESS_TOKEN;
+async function fetchSpark(
+  params,
+  includePagination = false
+) {
+  const token =
+    process.env.SPARK_ACCESS_TOKEN;
 
   if (!token) {
     throw new Error(
@@ -309,9 +312,19 @@ async function fetchSpark(params) {
     );
   }
 
-  return Array.isArray(json?.D?.Results)
-    ? json.D.Results
-    : [];
+  const results =
+    Array.isArray(json?.D?.Results)
+      ? json.D.Results
+      : [];
+
+  if (includePagination) {
+    return {
+      results,
+      pagination: json?.D?.Pagination || null
+    };
+  }
+
+  return results;
 }
 
 // Main API handler.
@@ -327,7 +340,7 @@ export default async function handler(req, res) {
     'application/json; charset=utf-8'
   );
 
-  // No database writes permitted.
+  // Read-only API. No Supabase writes.
 
   if (req.method !== 'GET') {
     return res.status(405).json({
@@ -364,7 +377,7 @@ export default async function handler(req, res) {
       req.query?.mls || ''
     ).trim();
 
-    // Single closed MLS listing.
+    // Single closed MLS listing lookup.
 
     if (mls) {
       if (!/^\d{5,12}$/.test(mls)) {
@@ -400,11 +413,17 @@ export default async function handler(req, res) {
 
       return res.status(200).json({
         success: true,
+
         mode: 'SOLD_SINGLE_READ_ONLY',
+
         mls,
+
         isClosed,
+
         status: row.status,
+
         saved: false,
+
         row: isClosed ? row : null
       });
     }
@@ -454,12 +473,35 @@ export default async function handler(req, res) {
       _filter: filter,
       _limit: String(limit),
       _page: String(page),
-      _expand: 'CustomFields'
+      _expand: 'CustomFields',
+      _pagination: '1'
     });
 
-    const rows = (
-      await fetchSpark(params)
-    ).map(normalize);
+    const spark = await fetchSpark(
+      params,
+      true
+    );
+
+    const rows = spark.results.map(normalize);
+
+    // Total matching sold MLS listings
+    // reported by Spark pagination.
+
+    const rawTotal =
+      spark.pagination?.TotalRows;
+
+    const totalSold =
+      Number.isSafeInteger(Number(rawTotal)) &&
+      rawTotal != null
+        ? Number(rawTotal)
+        : null;
+
+    const totalPages =
+      Number.isSafeInteger(
+        Number(spark.pagination?.TotalPages)
+      )
+        ? Number(spark.pagination.TotalPages)
+        : null;
 
     return res.status(200).json({
       success: true,
@@ -493,9 +535,14 @@ export default async function handler(req, res) {
           ])
         ),
 
-      // Only an estimate until total-count
-      // pagination is independently verified.
-      hasNextPage: rows.length === limit,
+      totalSold,
+
+      totalPages,
+
+      hasNextPage:
+        totalPages !== null
+          ? page < totalPages
+          : rows.length === limit,
 
       rows
     });
