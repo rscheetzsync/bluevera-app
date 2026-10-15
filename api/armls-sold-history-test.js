@@ -1,18 +1,20 @@
 
- // BlueVera ZIP-code sold-history diagnostic.
- // Read only; no Supabase writes.
+// BlueVera ARMLS sold history
+// GET = read-only
+// POST ?mls= = save one closed listing
+// Deploy as api/armls-sold-history-test.js
 
 const BASE = 'https://replication.sparkapi.com/v1';
 
-const FIELDS = {
-  floor: ['Floor Yr Updated', 'Floor Partial/Full'],
-  wiring: ['Wiring Yr Updated', 'Wiring Partial/Full'],
+const CATEGORIES = {
+  flooring: ['Floor Yr Updated', 'Floor Partial/Full'],
+  electrical: ['Wiring Yr Updated', 'Wiring Partial/Full'],
   plumbing: ['Plmbg Yr Updated', 'Plmbg Partial/Full'],
   hvac: ['Ht/Cool Yr Updated', 'Ht/Cool Partial/Full'],
   roof: ['Roof Yr Updated', 'Roof Partial/Full'],
   kitchen: ['Kitchen Yr Updated', 'Kitchen Partial/Full'],
-  baths: ['Bath(s) Yr Updated', 'Bath(s) Partial/Full'],
-  roomAddition: ['Rm Adtn Yr Updated', 'Rm Adtn Partial/Full'],
+  bathrooms: ['Bath(s) Yr Updated', 'Bath(s) Partial/Full'],
+  room_additions: ['Rm Adtn Yr Updated', 'Rm Adtn Partial/Full'],
   pool: ['Pool Yr Updated', 'Pool Partial/Full']
 };
 
@@ -24,78 +26,276 @@ function deep(obj, key) {
   }
 
   for (const value of Object.values(obj)) {
-    const hit = deep(value, key);
+    const found = deep(value, key);
 
-    if (hit !== null && hit !== undefined) {
-      return hit;
+    if (found !== null && found !== undefined) {
+      return found;
     }
   }
 
   return null;
 }
 
-function improvements(custom) {
-  const result = {};
+function text(v) {
+  return v == null || String(v).trim() === ''
+    ? null
+    : String(v).trim();
+}
+
+function number(v) {
+  return v == null ||
+    v === '' ||
+    !Number.isFinite(Number(v))
+      ? null
+      : Number(v);
+}
+
+function year(v) {
+  const n = number(v);
+
+  return Number.isInteger(n) &&
+    n >= 1800 &&
+    n <= 2027
+      ? n
+      : null;
+}
+
+function date(v) {
+  const s = text(v);
+
+  return s && /^\d{4}-\d{2}-\d{2}/.test(s)
+    ? s.slice(0, 10)
+    : null;
+}
+
+function address(f) {
+  return text(f.UnparsedAddress) || text([
+    f.StreetNumber,
+    f.StreetDirPrefix,
+    f.StreetName,
+    f.StreetSuffix
+  ].filter(Boolean).join(' '));
+}
+
+function normalize(record) {
+  const f = record.StandardFields || record;
+
+  const custom =
+    record.CustomFields ||
+    f.CustomFields ||
+    {};
+
+  const updates = {};
 
   for (const [category, [yearLabel, scopeLabel]]
-    of Object.entries(FIELDS)) {
+    of Object.entries(CATEGORIES)) {
 
-    const raw = deep(custom, yearLabel);
-    const year = Number(raw);
-    const scope = deep(custom, scopeLabel);
+    const y = year(deep(custom, yearLabel));
 
-    if (
-      raw !== null &&
-      raw !== undefined &&
-      String(raw).trim() !== '' &&
-      Number.isInteger(year) &&
-      year >= 1800 &&
-      year <= 2027
-    ) {
-      result[category] = {
-        year,
-        scope: scope == null
-          ? null
-          : String(scope).trim() || null
+    const scope = text(deep(custom, scopeLabel));
+
+    if (y !== null || scope !== null) {
+      updates[category] = {
+        year: y,
+        scope
       };
     }
   }
 
-  return result;
+  return {
+    mls: text(f.ListingId || f.MlsId),
+
+    listingKey: text(f.ListingKey || record.Id),
+
+    address: address(f),
+
+    city: text(f.City),
+
+    state: text(f.StateOrProvince),
+
+    zip: text(f.PostalCode),
+
+    parcel: text(f.ParcelNumber || f.TaxParcelId),
+
+    propertyType: text(f.PropertyType),
+
+    yearBuilt: year(f.YearBuilt),
+
+    sqft: number(
+      f.LivingArea || f.BuildingAreaTotal
+    ),
+
+    status: text(
+      f.StandardStatus || f.MlsStatus
+    ),
+
+    closeDate: date(f.CloseDate),
+
+    closePrice: number(f.ClosePrice),
+
+    remarks: text(f.PublicRemarks),
+
+    updates,
+
+    updateCount: Object.keys(updates).length
+  };
 }
 
-function numeric(value) {
-  return value == null ||
-    value === '' ||
-    !Number.isFinite(Number(value))
-      ? null
-      : Number(value);
+async function fetchSpark(params, token) {
+  const upstream = await fetch(
+    `${BASE}/listings?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json'
+      },
+
+      signal: AbortSignal.timeout(24000)
+    }
+  );
+
+  const data = await upstream.json()
+    .catch(() => null);
+
+  if (!data) {
+    throw new Error(
+      `Spark returned invalid JSON (HTTP ${upstream.status}).`
+    );
+  }
+
+  if (
+    !upstream.ok ||
+    data?.D?.Success === false
+  ) {
+    throw new Error(
+      data?.D?.Message ||
+      data?.message ||
+      `Spark rejected query (HTTP ${upstream.status}).`
+    );
+  }
+
+  return Array.isArray(data?.D?.Results)
+    ? data.D.Results
+    : [];
 }
 
-function address(f) {
-  return f.UnparsedAddress ||
-    [
-      f.StreetNumber,
-      f.StreetDirPrefix,
-      f.StreetName,
-      f.StreetSuffix,
-      f.City
-    ].filter(Boolean).join(' ');
+function dbRecord(row, original) {
+  const payload = {
+    mls_number: row.mls,
+
+    listing_key: row.listingKey,
+
+    property_address: row.address,
+
+    city: row.city,
+
+    state: row.state,
+
+    zip_code: row.zip,
+
+    parcel_number: row.parcel,
+
+    property_type: row.propertyType,
+
+    year_built: row.yearBuilt,
+
+    living_area_sqft: row.sqft,
+
+    sold_date: row.closeDate,
+
+    sold_price: row.closePrice,
+
+    listing_status: row.status,
+
+    listing_remarks: row.remarks,
+
+    updated_at: new Date().toISOString(),
+
+    // Store original data only if ARMLS
+    // licensing permits historical storage.
+    raw_armls_data: original
+  };
+
+  for (const [category, data]
+    of Object.entries(row.updates)) {
+
+    payload[category] = data.scope;
+
+    payload[`${category}_year`] = data.year;
+  }
+
+  return payload;
+}
+
+async function saveOne(row, original) {
+  const url = process.env.SUPABASE_URL;
+
+  const key =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !key) {
+    throw new Error(
+      'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in Vercel.'
+    );
+  }
+
+  const response = await fetch(
+    `${url.replace(/\/$/, '')}/rest/v1/armls_sold_properties?on_conflict=mls_number`,
+    {
+      method: 'POST',
+
+      headers: {
+        apikey: key,
+
+        Authorization: `Bearer ${key}`,
+
+        'Content-Type': 'application/json',
+
+        Prefer:
+          'resolution=merge-duplicates,return=representation'
+      },
+
+      body: JSON.stringify(
+        dbRecord(row, original)
+      ),
+
+      signal: AbortSignal.timeout(15000)
+    }
+  );
+
+  const result = await response.json()
+    .catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      `Supabase save failed (${response.status}): ${
+        result?.message ||
+        result?.details ||
+        'Unknown error'
+      }`
+    );
+  }
+
+  return Array.isArray(result) && result[0]
+    ? result[0].id
+    : null;
 }
 
 export default async function handler(req, res) {
-
-  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader(
+    'Cache-Control',
+    'private, no-store'
+  );
 
   res.setHeader(
     'Content-Type',
     'application/json; charset=utf-8'
   );
 
-  if (req.method !== 'GET') {
+  if (!['GET', 'POST'].includes(req.method)) {
     return res.status(405).json({
       success: false,
-      error: 'GET only'
+      error: 'GET or POST only.'
     });
   }
 
@@ -105,8 +305,7 @@ export default async function handler(req, res) {
   if (!secret) {
     return res.status(503).json({
       success: false,
-      error:
-        'Configure BLUEVERA_SOLD_DIAGNOSTIC_KEY in Vercel.'
+      error: 'Missing BLUEVERA_SOLD_DIAGNOSTIC_KEY.'
     });
   }
 
@@ -119,294 +318,167 @@ export default async function handler(req, res) {
     });
   }
 
-  const token = process.env.SPARK_ACCESS_TOKEN;
+  const token =
+    process.env.SPARK_ACCESS_TOKEN;
 
   if (!token) {
     return res.status(503).json({
       success: false,
-      error: 'SPARK_ACCESS_TOKEN is missing.'
+      error: 'Missing SPARK_ACCESS_TOKEN.'
     });
   }
 
-  // ==================================================
-  // SINGLE SOLD MLS PROPERTY TEST
-  // ==================================================
+  const mls =
+    String(req.query.mls || '').trim();
 
-  const mls = String(req.query.mls || '').trim();
+  try {
+    // ----------------------------------
+    // SINGLE SOLD PROPERTY LOOKUP
+    // ----------------------------------
 
-  if (mls) {
+    if (mls) {
+      if (!/^\d{5,12}$/.test(mls)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid numeric MLS number.'
+        });
+      }
 
-    if (!/^\d{5,12}$/.test(mls)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Enter a valid numeric MLS number.'
+      const params = new URLSearchParams({
+        _filter: `ListingId Eq '${mls}'`,
+        _limit: '1',
+        _expand: 'CustomFields'
       });
-    }
 
-    const singleFilter =
-      `ListingId Eq '${mls}'`;
-
-    const params = new URLSearchParams({
-      _filter: singleFilter,
-      _limit: '1',
-      _expand: 'CustomFields'
-    });
-
-    try {
-
-      const upstream = await fetch(
-        `${BASE}/listings?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json'
-          },
-          signal: AbortSignal.timeout(24000)
-        }
+      const results = await fetchSpark(
+        params,
+        token
       );
 
-      const data = await upstream.json()
-        .catch(() => null);
-
-      if (!data) {
-        return res.status(502).json({
-          success: false,
-          error: 'Spark returned invalid JSON.',
-          sparkStatus: upstream.status
-        });
-      }
-
-      if (
-        !upstream.ok ||
-        data?.D?.Success === false
-      ) {
-        return res.status(502).json({
-          success: false,
-          error:
-            data?.D?.Message ||
-            data?.message ||
-            'Spark request rejected.',
-          sparkStatus: upstream.status
-        });
-      }
-
-      const record =
-        Array.isArray(data?.D?.Results)
-          ? data.D.Results[0]
-          : null;
-
-      if (!record) {
+      if (!results.length) {
         return res.status(404).json({
           success: false,
-          error:
-            `MLS ${mls} was not returned by Spark.`
+          error: `MLS ${mls} not returned by Spark.`
         });
       }
 
-      const f = record.StandardFields || record;
+      const row = normalize(results[0]);
 
-      const status =
-        f.StandardStatus ||
-        f.MlsStatus ||
-        null;
+      const closed =
+        row.status?.toLowerCase() === 'closed';
 
-      if (String(status).toLowerCase() !== 'closed') {
+      if (!closed) {
         return res.status(200).json({
           success: true,
-          mode: 'SOLD_SINGLE_READ_ONLY',
           isClosed: false,
           mls,
-          status,
-          message:
-            'Listing found, but status is not Closed.',
-          row: null
+          status: row.status,
+          row: null,
+          saved: false
         });
       }
 
-      const updates = improvements(
-        record.CustomFields ||
-        f.CustomFields ||
-        {}
-      );
+      if (req.method === 'POST') {
+        if (!row.mls) {
+          return res.status(422).json({
+            success: false,
+            error: 'MLS ID missing in Spark response.'
+          });
+        }
 
-      const row = {
-        mls: f.ListingId || f.MlsId || mls,
+        const id = await saveOne(
+          row,
+          results[0]
+        );
 
-        listingKey:
-          f.ListingKey ||
-          record.Id ||
-          null,
-
-        address: address(f),
-
-        zip: f.PostalCode || null,
-
-        status,
-
-        closeDate: f.CloseDate || null,
-
-        closePrice: numeric(f.ClosePrice),
-
-        updates,
-
-        updateCount:
-          Object.keys(updates).length
-      };
+        return res.status(200).json({
+          success: true,
+          mode: 'SOLD_SINGLE_SAVED',
+          isClosed: true,
+          saved: true,
+          id,
+          row
+        });
+      }
 
       return res.status(200).json({
         success: true,
         mode: 'SOLD_SINGLE_READ_ONLY',
         isClosed: true,
-        mls,
-        status,
+        saved: false,
         row
       });
+    }
 
-    } catch (error) {
+    // ----------------------------------
+    // ZIP CODE SOLD HISTORY LOOKUP
+    // ----------------------------------
 
-      return res.status(502).json({
+    if (req.method === 'POST') {
+      return res.status(400).json({
         success: false,
         error:
-          error?.message ||
-          'Spark single MLS request failed.'
+          'POST requires a single MLS number. ZIP batches remain read-only.'
       });
     }
-  }
 
-  // ==================================================
-  // SOLD LISTINGS BY ZIP CODE
-  // ==================================================
+    const zip =
+      String(req.query.zip || '').trim();
 
-  const zip = String(req.query.zip || '').trim();
+    const limit =
+      Number(req.query.limit || 25);
 
-  const limit = Number(req.query.limit || 25);
+    const page =
+      Number(req.query.page || 1);
 
-  const page = Number(req.query.page || 1);
-
-  if (!/^\d{5}$/.test(zip)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Enter a five-digit ZIP code.'
-    });
-  }
-
-  if (
-    ![25, 50, 100].includes(limit) ||
-    !Number.isInteger(page) ||
-    page < 1 ||
-    page > 1000
-  ) {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid batch size or page.'
-    });
-  }
-
-  // Ten-year closed listing search.
-  // ZIP query syntax requires live Spark verification.
-
-  const filter =
-    `StandardStatus Eq 'Closed' ` +
-    `And PostalCode Eq '${zip}' ` +
-    `And CloseDate Ge 2016-10-14 ` +
-    `And CloseDate Le 2026-10-14`;
-
-  const q = new URLSearchParams({
-    _filter: filter,
-    _limit: String(limit),
-    _page: String(page),
-    _expand: 'CustomFields'
-  });
-
-  try {
-
-    const upstream = await fetch(
-      `${BASE}/listings?${q}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json'
-        },
-        signal: AbortSignal.timeout(24000)
-      }
-    );
-
-    const body = await upstream.text();
-
-    let data;
-
-    try {
-      data = JSON.parse(body);
-    } catch {
-      return res.status(502).json({
+    if (!/^\d{5}$/.test(zip)) {
+      return res.status(400).json({
         success: false,
-        error: 'Spark returned non-JSON.',
-        sparkStatus: upstream.status
+        error: 'Enter a five-digit ZIP code.'
       });
     }
 
     if (
-      !upstream.ok ||
-      data?.D?.Success === false
+      ![25, 50, 100].includes(limit) ||
+      !Number.isInteger(page) ||
+      page < 1 ||
+      page > 1000
     ) {
-      return res.status(502).json({
+      return res.status(400).json({
         success: false,
-        error:
-          data?.D?.Message ||
-          data?.message ||
-          'Spark query rejected.',
-        sparkStatus: upstream.status
+        error: 'Invalid batch size or page.'
       });
     }
 
-    const raw =
-      Array.isArray(data?.D?.Results)
-        ? data.D.Results
-        : [];
+    // Ten-year sold-listing filter
+    const filter =
+      `StandardStatus Eq 'Closed' ` +
+      `And PostalCode Eq '${zip}' ` +
+      `And CloseDate Ge 2016-10-14 ` +
+      `And CloseDate Le 2026-10-14`;
 
-    const rows = raw.map(record => {
-
-      const f = record.StandardFields || record;
-
-      const updates = improvements(
-        record.CustomFields ||
-        f.CustomFields ||
-        {}
-      );
-
-      return {
-        mls:
-          f.ListingId ||
-          f.MlsId ||
-          null,
-
-        listingKey:
-          f.ListingKey ||
-          record.Id ||
-          null,
-
-        address: address(f),
-
-        zip: f.PostalCode || null,
-
-        status:
-          f.StandardStatus ||
-          f.MlsStatus ||
-          null,
-
-        closeDate: f.CloseDate || null,
-
-        closePrice: numeric(f.ClosePrice),
-
-        updates,
-
-        updateCount:
-          Object.keys(updates).length
-      };
+    const params = new URLSearchParams({
+      _filter: filter,
+      _limit: String(limit),
+      _page: String(page),
+      _expand: 'CustomFields'
     });
 
-    return res.status(200).json({
+    const records = await fetchSpark(
+      params,
+      token
+    );
 
+    const rows = records.map(normalize);
+
+    const categoryCounts = Object.fromEntries(
+      Object.keys(CATEGORIES).map(k => [
+        k,
+        rows.filter(r => r.updates[k]).length
+      ])
+    );
+
+    return res.status(200).json({
       success: true,
 
       mode: 'SOLD_ZIP_HISTORY_READ_ONLY',
@@ -425,31 +497,23 @@ export default async function handler(req, res) {
 
       matchedUpdates:
         rows.filter(
-          x => x.updateCount > 0
+          r => r.updateCount > 0
         ).length,
 
-      categoryCounts:
-        Object.fromEntries(
-          Object.keys(FIELDS).map(k => [
-            k,
-            rows.filter(
-              x => x.updates[k]
-            ).length
-          ])
-        ),
+      categoryCounts,
 
-      hasNextPage: raw.length === limit,
+      hasNextPage:
+        rows.length === limit,
 
       rows
     });
 
   } catch (error) {
-
     return res.status(502).json({
       success: false,
       error:
         error?.message ||
-        'Spark request failed.'
+        'Sold history request failed.'
     });
   }
 }
