@@ -1,4 +1,3 @@
-
 // BlueVera ARMLS sold history
 // GET = read-only
 // POST ?mls= = save one closed listing
