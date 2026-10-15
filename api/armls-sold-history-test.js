@@ -84,7 +84,9 @@ function address(f) {
 }
 
 export default async function handler(req, res) {
+
   res.setHeader('Cache-Control', 'private, no-store');
+
   res.setHeader(
     'Content-Type',
     'application/json; charset=utf-8'
@@ -126,8 +128,159 @@ export default async function handler(req, res) {
     });
   }
 
+  // ==================================================
+  // SINGLE SOLD MLS PROPERTY TEST
+  // ==================================================
+
+  const mls = String(req.query.mls || '').trim();
+
+  if (mls) {
+
+    if (!/^\d{5,12}$/.test(mls)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Enter a valid numeric MLS number.'
+      });
+    }
+
+    const singleFilter =
+      `ListingId Eq '${mls}'`;
+
+    const params = new URLSearchParams({
+      _filter: singleFilter,
+      _limit: '1',
+      _expand: 'CustomFields'
+    });
+
+    try {
+
+      const upstream = await fetch(
+        `${BASE}/listings?${params}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json'
+          },
+          signal: AbortSignal.timeout(24000)
+        }
+      );
+
+      const data = await upstream.json()
+        .catch(() => null);
+
+      if (!data) {
+        return res.status(502).json({
+          success: false,
+          error: 'Spark returned invalid JSON.',
+          sparkStatus: upstream.status
+        });
+      }
+
+      if (
+        !upstream.ok ||
+        data?.D?.Success === false
+      ) {
+        return res.status(502).json({
+          success: false,
+          error:
+            data?.D?.Message ||
+            data?.message ||
+            'Spark request rejected.',
+          sparkStatus: upstream.status
+        });
+      }
+
+      const record =
+        Array.isArray(data?.D?.Results)
+          ? data.D.Results[0]
+          : null;
+
+      if (!record) {
+        return res.status(404).json({
+          success: false,
+          error:
+            `MLS ${mls} was not returned by Spark.`
+        });
+      }
+
+      const f = record.StandardFields || record;
+
+      const status =
+        f.StandardStatus ||
+        f.MlsStatus ||
+        null;
+
+      if (String(status).toLowerCase() !== 'closed') {
+        return res.status(200).json({
+          success: true,
+          mode: 'SOLD_SINGLE_READ_ONLY',
+          isClosed: false,
+          mls,
+          status,
+          message:
+            'Listing found, but status is not Closed.',
+          row: null
+        });
+      }
+
+      const updates = improvements(
+        record.CustomFields ||
+        f.CustomFields ||
+        {}
+      );
+
+      const row = {
+        mls: f.ListingId || f.MlsId || mls,
+
+        listingKey:
+          f.ListingKey ||
+          record.Id ||
+          null,
+
+        address: address(f),
+
+        zip: f.PostalCode || null,
+
+        status,
+
+        closeDate: f.CloseDate || null,
+
+        closePrice: numeric(f.ClosePrice),
+
+        updates,
+
+        updateCount:
+          Object.keys(updates).length
+      };
+
+      return res.status(200).json({
+        success: true,
+        mode: 'SOLD_SINGLE_READ_ONLY',
+        isClosed: true,
+        mls,
+        status,
+        row
+      });
+
+    } catch (error) {
+
+      return res.status(502).json({
+        success: false,
+        error:
+          error?.message ||
+          'Spark single MLS request failed.'
+      });
+    }
+  }
+
+  // ==================================================
+  // SOLD LISTINGS BY ZIP CODE
+  // ==================================================
+
   const zip = String(req.query.zip || '').trim();
+
   const limit = Number(req.query.limit || 25);
+
   const page = Number(req.query.page || 1);
 
   if (!/^\d{5}$/.test(zip)) {
@@ -149,8 +302,8 @@ export default async function handler(req, res) {
     });
   }
 
-  // ARMLS Spark closed-listing ZIP filter.
-  // Verify filter compatibility during the first live test.
+  // Ten-year closed listing search.
+  // ZIP query syntax requires live Spark verification.
 
   const filter =
     `StandardStatus Eq 'Closed' ` +
@@ -166,6 +319,7 @@ export default async function handler(req, res) {
   });
 
   try {
+
     const upstream = await fetch(
       `${BASE}/listings?${q}`,
       {
@@ -178,6 +332,7 @@ export default async function handler(req, res) {
     );
 
     const body = await upstream.text();
+
     let data;
 
     try {
@@ -204,11 +359,13 @@ export default async function handler(req, res) {
       });
     }
 
-    const raw = Array.isArray(data?.D?.Results)
-      ? data.D.Results
-      : [];
+    const raw =
+      Array.isArray(data?.D?.Results)
+        ? data.D.Results
+        : [];
 
     const rows = raw.map(record => {
+
       const f = record.StandardFields || record;
 
       const updates = improvements(
@@ -218,44 +375,76 @@ export default async function handler(req, res) {
       );
 
       return {
-        mls: f.ListingId || f.MlsId || null,
-        listingKey: f.ListingKey || record.Id || null,
+        mls:
+          f.ListingId ||
+          f.MlsId ||
+          null,
+
+        listingKey:
+          f.ListingKey ||
+          record.Id ||
+          null,
+
         address: address(f),
+
         zip: f.PostalCode || null,
+
         status:
           f.StandardStatus ||
           f.MlsStatus ||
           null,
+
         closeDate: f.CloseDate || null,
+
         closePrice: numeric(f.ClosePrice),
+
         updates,
-        updateCount: Object.keys(updates).length
+
+        updateCount:
+          Object.keys(updates).length
       };
     });
 
     return res.status(200).json({
+
       success: true,
+
       mode: 'SOLD_ZIP_HISTORY_READ_ONLY',
+
       zip,
+
       page,
+
       limit,
+
       from: '2016-10-14',
+
       to: '2026-10-14',
+
       fetched: rows.length,
-      matchedUpdates: rows.filter(
-        x => x.updateCount > 0
-      ).length,
-      categoryCounts: Object.fromEntries(
-        Object.keys(FIELDS).map(k => [
-          k,
-          rows.filter(x => x.updates[k]).length
-        ])
-      ),
+
+      matchedUpdates:
+        rows.filter(
+          x => x.updateCount > 0
+        ).length,
+
+      categoryCounts:
+        Object.fromEntries(
+          Object.keys(FIELDS).map(k => [
+            k,
+            rows.filter(
+              x => x.updates[k]
+            ).length
+          ])
+        ),
+
       hasNextPage: raw.length === limit,
+
       rows
     });
 
   } catch (error) {
+
     return res.status(502).json({
       success: false,
       error:
