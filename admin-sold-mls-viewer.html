@@ -1,0 +1,146 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
+  <title>BlueVera Historical MLS Admin Viewer</title>
+
+  <style>
+    body {
+      font: 16px Arial, sans-serif;
+      margin: 25px;
+      color: #132b4b;
+    }
+
+    button {
+      background: #0754ad;
+      color: white;
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 18px;
+      cursor: pointer;
+    }
+
+    iframe {
+      width: 100%;
+      height: 82vh;
+      border: 1px solid #ccd7e7;
+      border-radius: 8px;
+      margin-top: 15px;
+    }
+
+    p {
+      line-height: 1.4;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Historical MLS Updates — Authorized Test</h2>
+
+  <p>
+    One-property test for 324 W Monte Vista Road,
+    MLS 7066432.
+  </p>
+
+  <p>
+    This viewer passes your existing administrator
+    token to the trusted bluevera.org embedded map
+    only after its request.
+
+    It never changes Supabase.
+  </p>
+
+  <button id="load">
+    Open authorized map test
+  </button>
+
+  <p id="status"></p>
+
+  <div id="target"></div>
+
+  <script>
+    const allowed = new Set([
+      "https://bluevera.org",
+      "https://www.bluevera.org"
+    ]);
+
+    let frame = null;
+    let currentToken = "";
+
+    window.addEventListener("message", (event) => {
+      if (
+        !allowed.has(event.origin) ||
+        !frame ||
+        event.source !== frame.contentWindow
+      ) {
+        return;
+      }
+
+      if (
+        event.data?.type !==
+        "BLUEVERA_HISTORY_AUTH_REQUEST"
+      ) {
+        return;
+      }
+
+      if (!currentToken) {
+        return;
+      }
+
+      frame.contentWindow.postMessage(
+        {
+          type: "BLUEVERA_HISTORY_AUTH",
+          token: currentToken
+        },
+        event.origin
+      );
+
+      document.getElementById("status").textContent =
+        "Authorized map connected. " +
+        "Verify MLS Listing Updates.";
+    });
+
+    document.getElementById("load")
+      .addEventListener("click", () => {
+
+        currentToken =
+          localStorage.getItem(
+            "blueveraAdminAccessToken"
+          ) || "";
+
+        if (!currentToken) {
+          document.getElementById("status").textContent =
+            "Sign in to the BlueVera " +
+            "admin dashboard first.";
+          return;
+        }
+
+        document.getElementById("target").innerHTML = "";
+
+        frame = document.createElement("iframe");
+
+        frame.title =
+          "BlueVera map historical MLS test";
+
+        frame.src =
+          "https://www.bluevera.org/map.html?address=" +
+          encodeURIComponent(
+            "324 W Monte Vista Rd Phoenix AZ 85003"
+          );
+
+        document.getElementById("target")
+          .appendChild(frame);
+
+        document.getElementById("status").textContent =
+          "Loading map and requesting " +
+          "authorized connection…";
+      });
+  </script>
+
+</body>
+</html>
