@@ -11,7 +11,7 @@ const SERVICE_KEY =
   "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 const INTERNAL_API_KEY = process.env.BLUEVERA_INTERNAL_API_KEY || "";
-const RATING_VERSION = "bluevera-v5-2-system-documentation";
+const RATING_VERSION = "bluevera-v5-3-sold-mls-years";
 
 function clean(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -502,6 +502,75 @@ async function loadPropertyEntries(propertyId) {
   );
 }
 
+/*
+ * Structured ARMLS sold-listing fields are independent of advertising remarks.
+ * Use dated input-form fields for major-system history credit only.
+ * Matching is restricted to the same parcel or the exact normalized address.
+ * No database writes occur here; the usual central rating save follows.
+ */
+async function loadSoldArmlsRatingEntries(property) {
+  const parcelRaw = clean(property?.apn || property?.parcel_number);
+  const parcelKey = parcelRaw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const parcelForms = new Set([parcelRaw]);
+  if (/^\d{8}[A-Z]?$/.test(parcelKey)) {
+    parcelForms.add(`${parcelKey.slice(0, 3)}-${parcelKey.slice(3, 5)}-${parcelKey.slice(5)}`);
+  }
+  const address = clean(property?.full_address || property?.address || property?.street);
+  const normalized = normalizeAddress(address);
+  const streetNumber = normalized.match(/^\d+/)?.[0] || "";
+  const candidates = new Map();
+
+  async function collect(filter) {
+    const rows = await optionalSupabaseRequest(
+      `armls_sold_properties?select=*&${filter}&limit=500`,
+      { method: "GET" }
+    );
+    for (const row of rows) {
+      if (clean(row.mls_number)) candidates.set(clean(row.mls_number), row);
+    }
+  }
+
+  for (const form of parcelForms) {
+    if (form) await collect(`parcel_number=eq.${encodeURIComponent(form)}`);
+  }
+  if (streetNumber) {
+    await collect(`property_address=ilike.${encodeURIComponent(streetNumber + " %")}`);
+  }
+
+  const propertyZip = clean(property?.zip || property?.zip_code || address.match(/\b\d{5}\b/)?.[0]);
+  const output = [];
+  const systems = ["roof", "hvac", "electrical", "plumbing", "pool", "kitchen", "bathrooms", "flooring", "room_additions"];
+  const currentYear = new Date().getFullYear();
+  const seen = new Set();
+  for (const sold of candidates.values()) {
+    const soldParcel = clean(sold.parcel_number).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const sameParcel = Boolean(parcelKey && soldParcel && parcelKey === soldParcel);
+    const sameAddress = Boolean(normalized && normalizeAddress(sold.property_address) === normalized);
+    if (!sameParcel && !sameAddress) continue;
+    if (propertyZip && clean(sold.zip_code) && propertyZip !== clean(sold.zip_code)) continue;
+    const mls = clean(sold.mls_number);
+    for (const system of systems) {
+      const year = Number(sold[`${system}_year`]);
+      if (!Number.isInteger(year) || year < 1900 || year > currentYear + 1) continue;
+      const key = `${mls}|${system}|${year}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      output.push({
+        id: `sold-mls-${key}`,
+        property_id: property.id,
+        category: "listing_update",
+        system_name: system,
+        event_year: year,
+        statement: `${system} update reported for ${year}${clean(sold[system]) ? ` (${clean(sold[system])})` : ""}`,
+        source_type: "armls_listing_history",
+        source_name: "ARMLS",
+        verification_status: "listing_reported"
+      });
+    }
+  }
+  return output;
+}
+
 async function loadRatingInput(propertyId) {
   const rows = await optionalSupabaseRequest(
     `property_rating_inputs?property_id=eq.${encodeURIComponent(propertyId)}&select=*&limit=1`,
@@ -863,6 +932,13 @@ function majorSystemSourceLevel(entry) {
   const verificationStatus = normalize(entry?.verification_status);
   const text = entryText(entry);
 
+  // Advertising remarks are not structured MLS improvement fields.
+  if (sourceType === "listing_source" ||
+      sourceType === "public_listing_history" ||
+      normalize(entry?.category).includes("public listing remarks")) {
+    return { level: "other", label: "Advertising remarks — no system-year credit", points: 0 };
+  }
+
   const homeowner =
     sourceType.includes("homeowner") ||
     sourceName.includes("homeowner") ||
@@ -922,9 +998,10 @@ function majorSystemSourceLevel(entry) {
 
   if (listing) {
     return {
-      level: "armls",
+
+         level: "armls",
       label: "ARMLS / listing reported",
-      points: 2.5
+      points: 5
     };
   }
 
@@ -1125,7 +1202,7 @@ function calculateHistoryScore(property, entries, ratingInput) {
     count: majorSystemResult.count,
     systems: majorSystemResult.systems,
     scoringRule:
-      "Each system is worth 5 points when a homeowner-reported or documented/verified year is available, 2.5 points when only an ARMLS/listing-reported year is available, and 0 when no year is available."
+      "Each system is worth 5 points when a homeowner-reported or documented/verified year is available, 5 points when a dated ARMLS/listing-reported year is available, and 0 when no year is available."
   };
 
   const permitResult = calculatePermitPoints(entries, ratingInput);
@@ -1421,8 +1498,9 @@ function calculateDocumentScore(entries, documents) {
   ];
 
   const fileStatuses = [
-    "uploaded",
-    "document_uploaded",
+    "uploaded",   
+
+        "document_uploaded",
     "verified_by_document"
   ];
 
@@ -1725,18 +1803,21 @@ export default async function handler(req, res) {
       contributorResult,
       documents,
       ratingInput,
-      adjustments
+      adjustments,
+      soldArmlsEntries
     ] = await Promise.all([
       loadPropertyEntries(property.id),
       loadContributorEntries(property),
       loadPropertyDocuments(property),
       loadRatingInput(property.id),
-      loadRatingAdjustments(property.id)
+      loadRatingAdjustments(property.id),
+      loadSoldArmlsRatingEntries(property)
     ]);
 
     const entries = [
       ...reportEntries,
-      ...contributorResult.entries
+      ...contributorResult.entries,
+      ...soldArmlsEntries
     ];
 
     const historyResult = calculateHistoryScore(
@@ -1842,6 +1923,7 @@ export default async function handler(req, res) {
 
       inputCounts: {
         reportEntries: reportEntries.length,
+        soldArmlsEntries: soldArmlsEntries.length,
         contributorEntries: contributorResult.entries.length,
         homeownerUpdates: contributorResult.counts.homeownerUpdates,
         homeownerByPropertyId:
@@ -1901,3 +1983,4 @@ export default async function handler(req, res) {
     });
   }
 }
+    
