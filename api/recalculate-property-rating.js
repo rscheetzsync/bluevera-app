@@ -1,3 +1,4 @@
+
 export const config = {
   api: {
     bodyParser: { sizeLimit: "1mb" }
@@ -11,7 +12,7 @@ const SERVICE_KEY =
   "";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY || "";
 const INTERNAL_API_KEY = process.env.BLUEVERA_INTERNAL_API_KEY || "";
-const RATING_VERSION = "bluevera-v5-3-sold-mls-years";
+const RATING_VERSION = "bluevera-v6-20-40-40-confirmed-years";
 
 function clean(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -429,6 +430,7 @@ async function loadPropertyEntries(propertyId) {
     )
   );
 
+
   const normalizedListingSources = listingSources.map(row =>
     normalizeContributorEntry(
       {
@@ -569,6 +571,48 @@ async function loadSoldArmlsRatingEntries(property) {
     }
   }
   return output;
+}
+
+// Email-confirmed agent years are independent of a homeowner account.
+// Match full normalized address exactly, never fuzzy-match a neighbor's property.
+async function loadHomeownerConfirmedAgentEntries(property) {
+  const address = clean(property?.full_address || property?.address || property?.street);
+  const normalized = normalizeAddress(address);
+  if (!normalized) return [];
+  const number = normalized.match(/^\d+/)?.[0];
+  if (!number) return [];
+  const rows = await optionalSupabaseRequest(
+    `agent_homeowner_verifications?status=eq.completed&property_address=ilike.${encodeURIComponent(number + " %")}` +
+    `&select=id,property_address,reviewed_updates,completed_at&order=completed_at.desc&limit=500`,
+    { method: "GET" }
+  );
+  const latest = new Map();
+  for (const row of rows) {
+    if (normalizeAddress(row.property_address) !== normalized) continue;
+    for (const item of (Array.isArray(row.reviewed_updates) ? row.reviewed_updates : [])) {
+      const key = majorSystemKey({system_name:item.system});
+      if (!key || latest.has(key)) continue;
+      latest.set(key, {item, row});
+    }
+  }
+  return [...latest.entries()].flatMap(([system, {item, row}]) => {
+    if (!['confirmed','corrected'].includes(item.action)) return [];
+    const year = Number(item.confirmed_year);
+    if (!Number.isInteger(year) || year < 1900 || year > new Date().getFullYear() + 1) return [];
+    return [{
+      id: `homeowner-confirmed-${row.id}-${system}`,
+      property_id: property.id,
+      category: "Agent-submitted, homeowner-confirmed system year",
+      system_name: system,
+      event_year: year,
+      event_date: row.completed_at,
+      source_type: "homeowner_confirmation",
+      source_name: "Homeowner (agent submitted)",
+      verification_status: "homeowner_confirmed_not_document_verified",
+      statement: `${system} year ${year} confirmed or corrected by homeowner; documentation not verified`,
+      created_at: row.completed_at
+    }];
+  });
 }
 
 async function loadRatingInput(propertyId) {
@@ -792,6 +836,7 @@ async function loadContributorEntries(property) {
   };
 }
 
+
 function entryText(entry) {
   return normalize(
     [
@@ -843,35 +888,15 @@ function hasDocumentMatching(documents, terms) {
 }
 
 function majorSystemKey(entry) {
-  const text = entryText(entry);
-
-  if (containsAny(text, [
-    "hvac",
-    "air conditioner",
-    "air conditioning",
-    "furnace",
-    "heat pump"
-  ])) {
-    return "hvac";
-  }
-
-  if (containsAny(text, ["roof", "shingle", "underlayment"])) {
-    return "roof";
-  }
-
-  if (containsAny(text, ["water heater", "tankless"])) {
-    return "waterHeater";
-  }
-
-  if (containsAny(text, [
-    "electrical panel",
-    "electrical",
-    "breaker panel",
-    "breaker"
-  ])) {
-    return "electrical";
-  }
-
+  // Prefer the explicit field to avoid accidentally scoring unrelated text.
+  const explicit = normalize(entry?.system_name || entry?.system_type || "");
+  const text = explicit || entryText(entry);
+  if (containsAny(text, ["water heater", "water_heater", "waterheater", "tankless"])) return "waterHeater";
+  if (containsAny(text, ["sewer", "sewer line", "sewer_line"])) return "sewer";
+  if (containsAny(text, ["plumbing", "supply/drain", "supply drain"])) return "plumbing";
+  if (containsAny(text, ["hvac", "air conditioner", "air conditioning", "furnace", "heat pump"])) return "hvac";
+  if (containsAny(text, ["roof", "shingle", "underlayment"])) return "roof";
+  if (containsAny(text, ["electrical", "breaker panel", "breaker"])) return "electrical";
   return "";
 }
 
@@ -1013,95 +1038,41 @@ function majorSystemSourceLevel(entry) {
 }
 
 function calculateMajorSystemPoints(entries) {
-  const systems = {
-    hvac: {
-      label: "HVAC",
-      maximum: 5,
-      points: 0,
-      source: "none",
-      sourceLabel: "No year available",
-      year: null,
-      homeownerYear: null,
-      armlsYear: null,
-      documentedYear: null
-    },
-    roof: {
-      label: "Roof",
-      maximum: 5,
-      points: 0,
-      source: "none",
-      sourceLabel: "No year available",
-      year: null,
-      homeownerYear: null,
-      armlsYear: null,
-      documentedYear: null
-    },
-    waterHeater: {
-      label: "Water Heater",
-      maximum: 5,
-      points: 0,
-      source: "none",
-      sourceLabel: "No year available",
-      year: null,
-      homeownerYear: null,
-      armlsYear: null,
-      documentedYear: null
-    },
-    electrical: {
-      label: "Electrical Panel",
-      maximum: 5,
-      points: 0,
-      source: "none",
-      sourceLabel: "No year available",
-      year: null,
-      homeownerYear: null,
-      armlsYear: null,
-      documentedYear: null
-    }
-  };
-
-  (Array.isArray(entries) ? entries : []).forEach(entry => {
-    const systemKey = majorSystemKey(entry);
-
-    if (!systemKey || !entryHasSystemYear(entry)) return;
-
-    const year = entrySystemYear(entry);
-    const source = majorSystemSourceLevel(entry);
-    const current = systems[systemKey];
-
-    if (source.level === "homeowner") {
-      current.homeownerYear = year || current.homeownerYear;
-    }
-
-    if (source.level === "armls") {
-      current.armlsYear = year || current.armlsYear;
-    }
-
-    if (source.level === "documented") {
-      current.documentedYear = year || current.documentedYear;
-    }
-
-    if (source.points > current.points) {
-      current.points = source.points;
-      current.source = source.level;
-      current.sourceLabel = source.label;
-      current.year = year;
-    }
-  });
-
-  const score = Object.values(systems).reduce(
-    (total, system) => total + Number(system.points || 0),
-    0
+  const weights = { hvac: 8, roof: 8, waterHeater: 7, electrical: 7, plumbing: 5, sewer: 5 };
+  const names = { hvac: "HVAC", roof: "Roof", waterHeater: "Water Heater", electrical: "Electrical Panel", plumbing: "Plumbing", sewer: "Sewer Line" };
+  const systems = Object.fromEntries(Object.keys(weights).map(key => [key, {
+    label: names[key], maximum: weights[key], points: 0, source: "none",
+    sourceLabel: "No year available", year: null, homeownerYear: null,
+    armlsYear: null, documentedYear: null
+  }]));
+  // Sort by date so the most recent information is favored within an equal trust level.
+  const sorted = [...(Array.isArray(entries) ? entries : [])].sort((a, b) =>
+    (Date.parse(a?.updated_at || a?.created_at || a?.event_date || "") || 0) -
+    (Date.parse(b?.updated_at || b?.created_at || b?.event_date || "") || 0)
   );
-
-  const completedSystems = Object.values(systems).filter(
-    system => Number(system.points || 0) > 0
-  ).length;
-
+  const rank = { none: 0, armls: 1, homeowner: 2, documented: 3 };
+  for (const entry of sorted) {
+    const key = majorSystemKey(entry);
+    if (!key || !entryHasSystemYear(entry)) continue;
+    const year = entrySystemYear(entry);
+    if (!Number.isInteger(year)) continue;
+    const source = majorSystemSourceLevel(entry);
+    if (!source.points) continue;
+    const system = systems[key];
+    if (source.level === "homeowner") system.homeownerYear = year;
+    if (source.level === "armls") system.armlsYear = year;
+    if (source.level === "documented") system.documentedYear = year;
+    if ((rank[source.level] || 0) >= (rank[system.source] || 0)) {
+      system.points = weights[key];
+      system.source = source.level;
+      system.sourceLabel = source.label;
+      system.year = year;
+    }
+  }
   return {
-    score,
-    maximum: 20,
-    count: completedSystems,
+    score: Object.values(systems).reduce((total, system) => total + system.points, 0),
+    maximum: 40,
+    count: Object.values(systems).filter(system => system.points > 0).length,
     systems
   };
 }
@@ -1198,11 +1169,11 @@ function calculateHistoryScore(property, entries, ratingInput) {
   breakdown.majorSystems = {
     label: "Major system years",
     score: majorSystemResult.score,
-    maximum: 20,
+    maximum: 40,
     count: majorSystemResult.count,
     systems: majorSystemResult.systems,
     scoringRule:
-      "Each system is worth 5 points when a homeowner-reported or documented/verified year is available, 5 points when a dated ARMLS/listing-reported year is available, and 0 when no year is available."
+      "One year-credit per system: HVAC 8, Roof 8, Water Heater 7, Electrical 7, Plumbing 5, Sewer 5. Confirmed homeowner reports and qualifying structured MLS years can qualify; public advertising remarks cannot."
   };
 
   const permitResult = calculatePermitPoints(entries, ratingInput);
@@ -1282,14 +1253,16 @@ function calculateHistoryScore(property, entries, ratingInput) {
   const score = clamp(
     propertyRecordPoints + majorSystemResult.score,
     0,
-    40
+    60
   );
 
-  return { score, maximum: 40, breakdown };
+  return { score, maximum: 60, breakdown };
 }
+
 
 function calculateDocumentScore(entries, documents) {
   const documentedEntries = entries
+    .filter(entry => entry.source_type !== "homeowner_confirmation")
     .filter(isActiveDocument)
     .filter(entry => {
       const status = normalize(entry.verification_status);
@@ -1509,7 +1482,7 @@ function calculateDocumentScore(entries, documents) {
       row,
       fromDocumentTable: true
     })),
-    ...entries.filter(isActiveDocument).map(row => ({
+    ...entries.filter(row => row.source_type !== "homeowner_confirmation").filter(isActiveDocument).map(row => ({
       row,
       fromDocumentTable: false
     }))
@@ -1608,11 +1581,12 @@ function calculateDocumentScore(entries, documents) {
       0
     ),
     0,
-    60
+    40
   );
 
-  return { score, maximum: 60, breakdown };
+  return { score, maximum: 40, breakdown };
 }
+
 
 function buildImprovementItems(historyResult, documentResult) {
   const items = [];
@@ -1623,14 +1597,14 @@ function buildImprovementItems(historyResult, documentResult) {
     const missingSystems = Object.values(
       history.majorSystems.systems || {}
     )
-      .filter(system => Number(system?.points || 0) < 5)
+      .filter(system => Number(system?.points || 0) < Number(system?.maximum || 0))
       .map(system => system?.label)
       .filter(Boolean);
 
     items.push(
       missingSystems.length
         ? `Add or confirm homeowner years for: ${missingSystems.join(", ")}.`
-        : "Add or confirm homeowner years for the four major systems."
+        : "Add or confirm homeowner years for the six major systems."
     );
   }
 
@@ -1791,6 +1765,14 @@ export default async function handler(req, res) {
       address: body.address || body.fullAddress
     });
 
+    // Server-triggered email confirmations must resolve to an exact property.
+    if (user.id === "bluevera-internal-server" &&
+        !clean(body.propertyId || body.property_id) && property &&
+        normalizeAddress(body.address || body.fullAddress) !==
+        normalizeAddress(property.full_address || property.address || property.street)) {
+      return res.status(404).json({ success: false, error: "No exact property address match for verification." });
+    }
+
     if (!property?.id) {
       return res.status(404).json({
         success: false,
@@ -1804,20 +1786,23 @@ export default async function handler(req, res) {
       documents,
       ratingInput,
       adjustments,
-      soldArmlsEntries
+      soldArmlsEntries,
+      confirmedAgentEntries
     ] = await Promise.all([
       loadPropertyEntries(property.id),
       loadContributorEntries(property),
       loadPropertyDocuments(property),
       loadRatingInput(property.id),
       loadRatingAdjustments(property.id),
-      loadSoldArmlsRatingEntries(property)
+      loadSoldArmlsRatingEntries(property),
+      loadHomeownerConfirmedAgentEntries(property)
     ]);
 
     const entries = [
       ...reportEntries,
       ...contributorResult.entries,
-      ...soldArmlsEntries
+      ...soldArmlsEntries,
+      ...confirmedAgentEntries
     ];
 
     const historyResult = calculateHistoryScore(
@@ -1831,8 +1816,8 @@ export default async function handler(req, res) {
       documents
     );
 
-    const finalHistoryScore = clamp(historyResult.score, 0, 40);
-    const finalDocumentScore = clamp(documentResult.score, 0, 60);
+    const finalHistoryScore = clamp(historyResult.score, 0, 60);
+    const finalDocumentScore = clamp(documentResult.score, 0, 40);
 
     const baseRating = clamp(
       finalHistoryScore + finalDocumentScore,
@@ -1877,9 +1862,9 @@ export default async function handler(req, res) {
 
       breakdown: {
         publicHistory: finalHistoryScore,
-        publicHistoryMax: 40,
+        publicHistoryMax: 60,
         uploadedDocumentation: finalDocumentScore,
-        uploadedDocumentationMax: 60,
+        uploadedDocumentationMax: 40,
         baseRating,
         adjustmentTotal,
         total: finalScore,
@@ -1924,6 +1909,7 @@ export default async function handler(req, res) {
       inputCounts: {
         reportEntries: reportEntries.length,
         soldArmlsEntries: soldArmlsEntries.length,
+        homeownerConfirmedAgentEntries: confirmedAgentEntries.length,
         contributorEntries: contributorResult.entries.length,
         homeownerUpdates: contributorResult.counts.homeownerUpdates,
         homeownerByPropertyId:
@@ -1983,4 +1969,3 @@ export default async function handler(req, res) {
     });
   }
 }
-    
