@@ -2,22 +2,24 @@
 /**
  * BlueVera — 5-Year Capital Exposure (server-side, CommonJS / Vercel).
  * Deploy to bluevera.app/api/capital-exposure.js.
- * Formula extracted from full-report (44).html (Oct 29, 2026).
+ * Formula extracted unchanged from full-report (44).html (Oct 29, 2026).
  *
- * Server-side property history integration:
- * - Public age-based baseline
- * - Canonical property ID verification
- * - Positively verified homeowner / contractor records
- * - ARMLS structured updates not yet integrated
+ * CURRENT INTEGRATION BOUNDARY:
+ * This endpoint returns the public-data AGE-BASED BASELINE only. It intentionally
+ * does not accept client-supplied contributor claims as verified. Connect the
+ * existing trusted homeowner/contractor/MLS records server-side before enabling
+ * qualified updates. Do not publish baseline totals as updated/verified totals.
  *
  * POST JSON: { builtYear: 1950, sqft: 2258, permitCount: 4 }
  * GET query: ?builtYear=1950&sqft=2258&permitCount=4
+ * Response: { ok, status, propertyFacts, capitalExposure, ... }
  */
 'use strict';
 
 function latestClaimFor(claims, systemKey){
-  const filtered = (claims || []).filter(c => c.system === systemKey);
-  return filtered.length ? filtered[filtered.length - 1] : null;
+  const matches = (claims || []).filter(c => c.system === systemKey);
+  // Work year, not record insertion order, determines the newest upgrade.
+  return matches.sort((a, b) => Number(b.year) - Number(a.year))[0] || null;
 }
 
 function claimProvidesDocs(claim){
@@ -27,6 +29,8 @@ function claimProvidesDocs(claim){
 function isCapitalEligibleClaim(claim){
   if (!claim) return false;
 
+  // Capital exposure keeps its original age-based baseline.
+  // Only a DATED system update can adjust that baseline.
   const updateYear = Number.parseInt(String(claim.year || ""), 10);
   if (!Number.isFinite(updateYear) || updateYear < 1900 || updateYear > 2100) {
     return false;
@@ -43,7 +47,9 @@ function isCapitalEligibleClaim(claim){
 function optionalRangeFromClaim(originalRange, claim){
   if (!claim) return originalRange;
 
-  if (claimProvidesDocs(claim)) return [0, 0];
+  if (claimProvidesDocs(claim)) {
+    return [0, 0];
+  }
 
   if (claim.recentWords || claim.year) {
     return [
@@ -59,7 +65,8 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   const sf = Number.isFinite(sqft) ? sqft : NaN;
   const bigHouse = Number.isFinite(sf) && sf >= 2200;
 
-  // Permit count does not affect Capital Exposure.
+  // Permit count is intentionally excluded from 5-Year Capital Exposure.
+  // Permit history remains a separate due-diligence/documentation signal.
   const lowPermits = false;
 
   const roofClaim = latestClaimFor(claims, "roof");
@@ -87,18 +94,16 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
 
   function rangeFlooring(sf){
     if (!Number.isFinite(sf)) return [3500, 16000];
-    return [
-      Math.max(2500, sf * 2.5),
-      Math.max(7000, sf * 7.5)
-    ];
+    const low = Math.max(2500, sf * 2.5);
+    const high = Math.max(7000, sf * 7.5);
+    return [low, high];
   }
 
   function rangeInteriorPaint(sf){
     if (!Number.isFinite(sf)) return [2500, 9000];
-    return [
-      Math.max(2000, sf * 1.25),
-      Math.max(4500, sf * 3.5)
-    ];
+    const low = Math.max(2000, sf * 1.25);
+    const high = Math.max(4500, sf * 3.5);
+    return [low, high];
   }
 
   function rangeKitchen(bigHouse){
@@ -114,6 +119,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   }
 
   function rangePoolInstall(){
+    /* U.S. average installed in-ground pool range, rounded for planning. */
     return [44500, 87500];
   }
 
@@ -130,7 +136,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       high: range?.[1] ?? null,
       why,
       verify,
-      optional: false
+      optional:false
     });
   }
 
@@ -139,10 +145,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
 
     if (Number(range?.[0]) === 0 && Number(range?.[1]) === 0) {
       status = "verified";
-    } else if (
-      why &&
-      String(why).toLowerCase().includes("adjusted by ask bluevera claim")
-    ) {
+    } else if (why && String(why).toLowerCase().includes("adjusted by ask bluevera claim")) {
       status = "updated";
     }
 
@@ -154,15 +157,14 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       high: range?.[1] ?? null,
       why,
       verify,
-      optional: true
+      optional:true
     });
   }
 
-  function adjustStatusFromClaim(baseStatus, claim){
+  function adjustStatusFromClaim(baseStatus, claim, recentThresholdYears, mediumIfClaimOnly = true){
     if (!claim) return baseStatus;
 
     const updateYear = Number.parseInt(String(claim.year || ""), 10);
-
     if (!Number.isFinite(updateYear) || updateYear < 1900 || updateYear > 2100) {
       return baseStatus;
     }
@@ -175,7 +177,6 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     if (!claim) return originalRange;
 
     const updateYear = Number.parseInt(String(claim.year || ""), 10);
-
     if (!Number.isFinite(updateYear) || updateYear < 1900 || updateYear > 2100) {
       return originalRange;
     }
@@ -194,7 +195,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     if (yrs >= 25) roofStatus = "med";
     if (yrs >= 35) roofStatus = "high";
   }
-  roofStatus = adjustStatusFromClaim(roofStatus, roofClaim);
+  roofStatus = adjustStatusFromClaim(roofStatus, roofClaim, 15);
 
   addCore(
     "Roof",
@@ -217,7 +218,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     if (yrs >= 18) hvacStatus = "med";
     if (yrs >= 25) hvacStatus = "high";
   }
-  hvacStatus = adjustStatusFromClaim(hvacStatus, hvacClaim);
+  hvacStatus = adjustStatusFromClaim(hvacStatus, hvacClaim, 8);
 
   addCore(
     "HVAC",
@@ -324,6 +325,8 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     "Order a sewer scope; confirm line material, roots, offsets, belly, prior repairs."
   );
 
+  // Windows / Envelope is optional unless a separately documented
+  // defect requires repair. Age alone does not trigger core exposure.
   addOptional(
     "Windows / Envelope (Optional improvement)",
     "Varies",
@@ -337,7 +340,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       : "Inspect operation, glazing, drafts, water intrusion, frames, historic-preservation requirements, and condition before planning replacement."
   );
 
-  const olderHome = yrs !== null && yrs >= 25;
+  const olderHome = (yrs !== null && yrs >= 25);
 
   let kitchenRange = rangeKitchen(bigHouse);
   if (kitchenClaim && (kitchenClaim.recentWords || kitchenClaim.year)) {
@@ -435,17 +438,17 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   let totalHigh = 0;
 
   planCore.forEach(p => {
-    const include = [
-      "high",
-      "med",
-      "claim",
-      "documented"
-    ].includes(p.status);
+    const include = (
+      p.status === "high" ||
+      p.status === "med" ||
+      p.status === "claim" ||
+      p.status === "documented"
+    );
 
     if (!include) return;
 
-    totalLow += p.low || 0;
-    totalHigh += p.high || 0;
+    totalLow += (p.low || 0);
+    totalHigh += (p.high || 0);
   });
 
   let reserveLow = 0;
@@ -457,8 +460,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   }
 
   const docsMentioned =
-    (claims || []).some(c => claimProvidesDocs(c)) ||
-    !!docsClaim;
+    (claims || []).some(c => claimProvidesDocs(c)) || !!docsClaim;
 
   if (docsMentioned && reserveLow > 0) {
     reserveLow = Math.round(reserveLow * 0.6);
@@ -472,8 +474,8 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   let optHigh = 0;
 
   planOptional.forEach(p => {
-    optLow += p.low || 0;
-    optHigh += p.high || 0;
+    optLow += (p.low || 0);
+    optHigh += (p.high || 0);
   });
 
   return {
@@ -490,27 +492,35 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
 }
 
 function parseNumber(value, min, max, integer) {
-  if (typeof value !== "number" && typeof value !== "string") return null;
-  if (typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value.trim())) return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+
+  if (
+    typeof value === 'string' &&
+    !/^\d+(?:\.\d+)?$/.test(value.trim())
+  ) return null;
 
   const n = Number(value);
 
-  if (!Number.isFinite(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
-    return null;
-  }
+  if (
+    !Number.isFinite(n) ||
+    n < min ||
+    n > max ||
+    (integer && !Number.isInteger(n))
+  ) return null;
 
   return n;
 }
 
 const ALLOWED_ORIGINS = new Set([
-  "https://bluevera.org",
-  "https://www.bluevera.org",
-  "https://bluevera.app",
-  "https://www.bluevera.app"
+  'https://bluevera.org',
+  'https://www.bluevera.org',
+  'https://bluevera.app',
+  'https://www.bluevera.app'
 ]);
 
-// Retrieve property history from the fixed BlueVera endpoint.
-const HISTORY_SERVICE = "https://www.bluevera.app";
+// Server-side history retrieval. Fixed URL; never accept a caller-supplied URL.
+// Property ID must resolve to exactly the requested property.
+const HISTORY_SERVICE = 'https://www.bluevera.app';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -518,105 +528,145 @@ const UUID_RE =
 function getValue(record, keys) {
   for (const key of keys) {
     const value = record?.[key];
-
     if (
       value !== undefined &&
       value !== null &&
       String(value).trim()
-    ) {
-      return value;
-    }
+    ) return value;
   }
-
-  return "";
+  return '';
 }
 
 function systemFromRecord(record) {
-  const structured = String(
-    getValue(record, ["system", "category", "title"])
+  const text = String(
+    getValue(record, ['system', 'category', 'title'])
   ).toLowerCase();
 
-  const text = structured + " " +
-    String(getValue(record, ["summary"])).toLowerCase();
+  if (/sewer/.test(text)) return 'sewer';
+  if (/water\s*heater|tankless/.test(text)) return 'waterheater';
+  if (/hvac|air\s*condition|heat\s*pump|furnace/.test(text)) return 'hvac';
+  if (/roof/.test(text)) return 'roof';
+  if (/electric|panel/.test(text)) return 'electrical';
+  if (/plumb|repipe|supply\s*line/.test(text)) return 'plumbing';
 
-  if (/\b(sewer|sewer line|sewer scope)\b/.test(structured)) {
-    return "sewer";
+  return null;
+}
+
+function recordWorkYear(record, builtYear) {
+  // Public history "year" is explicit event_year. It may be null even if the
+  // original work date is clearly documented in the description.
+  const direct = String(record?.year ?? '').trim();
+
+  let year = /^\d{4}$/.test(direct) ? Number(direct) : null;
+
+  const summary = String(record?.summary || '');
+  const date = String(record?.date || '');
+
+  if (
+    year == null &&
+    /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}$/i.test(date)
+  ) {
+    year = Number(date.match(/20\d{2}/)[0]);
   }
 
-  if (/\b(water heater|waterheater|tankless)\b/.test(text)) {
-    return "waterheater";
-  }
+  // Conservative: only an explicit work/completion or installation year;
+  // do not use createdAt/updatedAt (upload timestamps).
+  if (year == null) {
+    const match = summary.match(
+      /\b(?:installed|replaced|replacement|completed|upgraded|repiped|repaired|renewed|in|during)\s+(?:in\s+)?(?:[A-Za-z]+\s+)?(19\d{2}|20\d{2})\b/i
+    );
 
-  if (/\b(hvac|a\/c|air condition|heat pump|furnace)\b/.test(text)) {
-    return "hvac";
-  }
-
-  if (/\b(roof|shingle|underlayment)\b/.test(text)) {
-    return "roof";
-  }
-
-  if (/\b(electrical|electric panel|breaker panel|rewire)\b/.test(text)) {
-    return "electrical";
+    if (match) year = Number(match[1]);
   }
 
   if (
-    /\b(sewer|sewer line|sewer scope)\b/.test(text) &&
-    !/\b(plumb|repipe)\b/.test(structured)
-  ) {
-    return "sewer";
+    !Number.isInteger(year) ||
+    year < Math.max(1900, Number(builtYear) || 1900) ||
+    year > new Date().getFullYear()
+  ) return null;
+
+  return year;
+}
+
+function qualifyingWork(system, summary) {
+  const text = String(summary || '').toLowerCase();
+
+  // A maintenance visit, small repair, or component service is not full-system renewal.
+  if (
+    /\b(service|serviced|flushed|descaled|inspected|inspection|tuned|cleaned|patched|resealed)\b/.test(text)
+  ) return false;
+
+  if (system === 'roof') {
+    if (
+      /\b(repair|repaired|patch|leak|slope|section|partial)\b/.test(text) &&
+      !/\b(full|entire|complete)\s+roof\s+(?:replaced|replacement)/.test(text)
+    ) return false;
+
+    return /\b(replaced|replacement|new roof|reroof|re-roof)\b/.test(text);
   }
 
-  if (/\b(plumbing|repipe|supply line|drain pipe)\b/.test(text)) {
-    return "plumbing";
+  if (system === 'hvac') {
+    return /\b(replaced|replacement|installed|new hvac|new a\/c|new air conditioner)\b/.test(text);
   }
 
-  return null;
+  if (system === 'waterheater') {
+    return /\b(replaced|replacement|installed|new water heater|new tankless)\b/.test(text);
+  }
+
+  if (system === 'electrical') {
+    return (
+      /\b(panel|service panel|breaker panel)\b/.test(text) &&
+      /\b(replaced|replacement|installed|upgraded|new)\b/.test(text)
+    );
+  }
+
+  if (system === 'sewer') {
+    return (
+      /\b(sewer)\b/.test(text) &&
+      /\b(replaced|replacement|relined|new sewer)\b/.test(text)
+    );
+  }
+
+  if (system === 'plumbing') {
+    return /\b(repipe|repiped|re-pipe|replaced supply|replaced drain|full plumbing replacement)\b/.test(text);
+  }
+
+  return false;
 }
 
 function claimFromTrustedRecord(record, sourceType, builtYear) {
   const system = systemFromRecord(record);
   if (!system) return null;
 
-  // Use the recorded work year, not the record submission date.
-  const rawYear = record?.year;
-
-  if (!/^\d{4}$/.test(String(rawYear ?? ""))) {
-    return null;
-  }
-
-  const year = Number(rawYear);
-
-  if (
-    year < Math.max(1900, builtYear) ||
-    year > new Date().getFullYear()
-  ) {
-    return null;
-  }
-
-  const status = String(record?.verificationStatus || "")
+  const status = String(record?.verificationStatus || '')
     .trim()
     .toLowerCase()
-    .replace(/[_-]+/g, " ");
+    .replace(/[_-]+/g, ' ');
 
-  // Submitted and uploaded records do not automatically count as verified.
-  if (![
-    "verified",
-    "approved",
-    "verified by homeowner",
-    "owner verified"
-  ].includes(status)) {
-    return null;
-  }
+  // Documented means the property history was documented; the public endpoint
+  // does not expose a validated receipt/permit, so do not set proof flags.
+  if (
+    ![
+      'verified',
+      'approved',
+      'verified by homeowner',
+      'owner verified',
+      'documented'
+    ].includes(status)
+  ) return null;
+
+  const summary = String(record?.summary || '');
+
+  if (!qualifyingWork(system, summary)) return null;
+
+  const year = recordWorkYear(record, builtYear);
+  if (!year) return null;
 
   return {
     system,
     year,
     sourceType,
-    raw: String(
-      record?.summary ||
-      record?.title ||
-      system
-    ).slice(0, 300),
+    raw: summary.slice(0, 300),
     recentWords: true,
     hasReceipt: false,
     hasPermit: false,
@@ -626,53 +676,47 @@ function claimFromTrustedRecord(record, sourceType, builtYear) {
 
 async function readTrustedHistory(propertyId) {
   if (!UUID_RE.test(propertyId)) {
-    throw new Error("Invalid canonical propertyId (UUID required)");
+    throw new Error('Invalid canonical propertyId (UUID required)');
   }
 
   const url =
     HISTORY_SERVICE +
-    "/api/public-property-history?propertyId=" +
+    '/api/public-property-history?propertyId=' +
     encodeURIComponent(propertyId);
 
   const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    6500
-  );
+  const timeout = setTimeout(() => controller.abort(), 6500);
 
   try {
     const response = await fetch(url, {
-      headers: {
-        Accept: "application/json"
-      },
+      headers: { Accept: 'application/json' },
       signal: controller.signal
     });
 
     if (!response.ok) {
-      throw new Error(
-        "Public property history HTTP " + response.status
-      );
+      throw new Error('Public property history HTTP ' + response.status);
     }
 
     const result = await response.json();
 
     if (
       result?.success !== true ||
-      String(result?.property?.id || "").toLowerCase() !==
-        propertyId.toLowerCase()
+      String(result?.property?.id || '').toLowerCase() !== propertyId.toLowerCase()
     ) {
-      throw new Error(
-        "Property identity mismatch or invalid history response"
-      );
+      throw new Error('Property identity mismatch or invalid history response');
     }
 
     const records = [
-      ...(Array.isArray(result.homeownerUpdates)
-        ? result.homeownerUpdates.map(r => [r, "homeowner"])
-        : []),
-      ...(Array.isArray(result.contractorRecords)
-        ? result.contractorRecords.map(r => [r, "contractor"])
-        : [])
+      ...(
+        Array.isArray(result.homeownerUpdates)
+          ? result.homeownerUpdates.map(r => [r, 'homeowner'])
+          : []
+      ),
+      ...(
+        Array.isArray(result.contractorRecords)
+          ? result.contractorRecords.map(r => [r, 'contractor'])
+          : []
+      )
     ];
 
     return {
@@ -693,61 +737,50 @@ async function readTrustedHistory(propertyId) {
 }
 
 async function handler(req, res) {
-  const origin = String(req.headers?.origin || "");
+  const origin = String(req.headers?.origin || '');
 
   if (ALLOWED_ORIGINS.has(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader(
-      "Access-Control-Allow-Methods",
-      "GET, POST, OPTIONS"
-    );
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type"
-    );
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   }
 
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
-  if (req.method === "OPTIONS") {
+  if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  if (
-    req.method !== "GET" &&
-    req.method !== "POST"
-  ) {
-    res.setHeader("Allow", "GET, POST, OPTIONS");
-
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.setHeader('Allow', 'GET, POST, OPTIONS');
     return res.status(405).json({
       ok: false,
-      error: "Method not allowed"
+      error: 'Method not allowed'
     });
   }
 
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     return res.status(403).json({
       ok: false,
-      error: "Origin not allowed"
+      error: 'Origin not allowed'
     });
   }
 
   try {
-    const payload =
-      req.method === "GET"
-        ? (req.query || {})
-        : (req.body || {});
+    const payload = req.method === 'GET'
+      ? (req.query || {})
+      : (req.body || {});
 
     if (
       !payload ||
-      typeof payload !== "object" ||
+      typeof payload !== 'object' ||
       Array.isArray(payload)
     ) {
       return res.status(400).json({
         ok: false,
-        error: "Expected a JSON object"
+        error: 'Expected a JSON object'
       });
     }
 
@@ -765,40 +798,31 @@ async function handler(req, res) {
       false
     );
 
-    const permits =
-      payload.permitCount == null
-        ? 0
-        : parseNumber(
-            payload.permitCount,
-            0,
-            100000,
-            true
-          );
+    const permits = payload.permitCount == null
+      ? 0
+      : parseNumber(payload.permitCount, 0, 100000, true);
 
     if (permits === null) {
       return res.status(400).json({
         ok: false,
-        error: "Valid permitCount required"
+        error: 'Valid builtYear and sqft required; permitCount optional'
       });
     }
 
-    const propertyId =
-      typeof payload.propertyId === "string"
-        ? payload.propertyId.trim()
-        : "";
+    const propertyId = typeof payload.propertyId === 'string'
+      ? payload.propertyId.trim()
+      : '';
 
     let claims = [];
-    let historyStatus = propertyId
-      ? "unavailable"
-      : "not_requested";
+    let historyStatus = propertyId ? 'unavailable' : 'not_requested';
 
     if (propertyId) {
       try {
         const history = await readTrustedHistory(propertyId);
+        historyStatus = 'loaded';
 
-        historyStatus = "loaded";
-
-        // Prefer property facts from the central property record.
+        // Prefer authoritative year and square footage whenever property ID is supplied.
+        // Do not silently replace an invalid authoritative value with client input.
         year = parseNumber(
           history.property.year_built,
           1701,
@@ -816,7 +840,7 @@ async function handler(req, res) {
         claims = history.records;
       } catch (error) {
         console.warn(
-          "[BlueVera Capital Exposure] history unavailable:",
+          '[BlueVera Capital Exposure] history unavailable:',
           error.message
         );
       }
@@ -825,13 +849,11 @@ async function handler(req, res) {
     if (year === null || sqft === null) {
       return res.status(400).json({
         ok: false,
-        error:
-          "Valid yearBuilt and sqft required; authoritative property facts are missing or invalid"
+        error: 'Valid yearBuilt and sqft required; authoritative property facts are missing or invalid'
       });
     }
 
     const age = new Date().getFullYear() - year;
-
     const plan = buildCapitalPlan(
       year,
       age,
@@ -843,11 +865,11 @@ async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       status: claims.length
-        ? "trusted_records_applied"
-        : "baseline_only",
+        ? 'trusted_records_applied'
+        : 'baseline_only',
       historyStatus,
       appliedRecordCount: claims.length,
-      version: "2026-10-29-server-v3-public-history",
+      version: '2026-10-29-server-v4-dated-work',
       propertyFacts: {
         builtYear: year,
         age,
@@ -855,26 +877,24 @@ async function handler(req, res) {
         permitCount: permits
       },
       capitalExposure: plan,
-      warning:
-        historyStatus === "unavailable"
-          ? "Contributor history unavailable; age-based fallback shown. Property facts may be client supplied and must not be represented as verified."
-          : "Only positively verified homeowner/contractor updates from public property history applied. Dated ARMLS integration pending; documentary proof not inferred."
+      warning: historyStatus === 'unavailable'
+        ? 'Contributor history unavailable; age-based fallback shown. Property facts may be client supplied and must not be represented as verified.'
+        : 'Only documented/verified dated full-system work applied; repair/service records excluded. Public history does not certify receipts. Dated ARMLS integration pending.'
     });
-
   } catch (err) {
     console.error(
-      "[BlueVera Capital Exposure] computation error:",
+      '[BlueVera Capital Exposure] computation error:',
       err
     );
 
     return res.status(500).json({
       ok: false,
-      error: "Capital Exposure temporarily unavailable"
+      error: 'Capital Exposure temporarily unavailable'
     });
   }
 }
 
 module.exports = handler;
 
-// Local testing only.
+// For local testing only; not part of the HTTP response.
 module.exports._buildCapitalPlan = buildCapitalPlan;
