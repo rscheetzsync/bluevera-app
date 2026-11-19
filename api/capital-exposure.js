@@ -1,4 +1,3 @@
-
 /**
  * BlueVera — 5-Year Capital Exposure (server-side, CommonJS / Vercel).
  * Deploy to bluevera.app/api/capital-exposure.js.
@@ -236,23 +235,71 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       : "Serial/installation year, service records, duct condition, insulation/returns."
   );
 
-  let whStatus = "unknown";
-  if (yrs !== null){
-    if (yrs >= 12) whStatus = "med";
-    if (yrs >= 18) whStatus = "high";
-  }
-  whStatus = adjustStatusFromClaim(whStatus, waterClaim);
+  // Water heater pilot: classify timing separately from the cost of replacement.
+  // The handler has already filtered out service/repair records before building claims.
+  const waterAgeMin = 8;
+  const waterAgeMax = 12;
+  const waterHorizon = 5;
+  const asOfYear = Number.isInteger(builtYear) && Number.isInteger(age)
+    ? builtYear + age
+    : new Date().getFullYear();
+  const waterWorkYear = Number(waterClaim?.year);
+  const hasWaterReplacementYear = Number.isInteger(waterWorkYear)
+    && waterWorkYear >= Math.max(1900, Number.isInteger(builtYear) ? builtYear : 1900)
+    && waterWorkYear <= asOfYear;
+  const hasBuildYear = Number.isInteger(builtYear)
+    && builtYear >= 1701 && builtYear <= asOfYear;
+  const waterReferenceYear = hasWaterReplacementYear
+    ? waterWorkYear
+    : (hasBuildYear ? builtYear : null);
+  const waterAge = waterReferenceYear === null ? null : asOfYear - waterReferenceYear;
+  const waterAgeBasis = hasWaterReplacementYear
+    ? "dated_replacement_record"
+    : (hasBuildYear ? "if_original" : "unavailable");
+  // A record explicitly identifying a tankless unit must not be assessed as a tank.
+  const waterIsTankless = hasWaterReplacementYear && /\btankless\b/i.test(waterClaim.raw || "");
+  const waterTiming = waterIsTankless ? "tankless_not_assessed"
+    : waterAge === null ? "date_needed"
+    : waterAge + waterHorizon < waterAgeMin ? "outside_five_year_window"
+    : waterAge + waterHorizon === waterAgeMin ? "at_five_year_boundary"
+    : waterAge < waterAgeMin ? "enters_within_five_years"
+    : waterAge >= waterAgeMax ? "at_or_beyond_upper_lifespan"
+    : "in_planning_window";
+  const waterTimingLabels = {
+    tankless_not_assessed: "Tankless timing not assessed",
+    date_needed: "Installation date needed",
+    outside_five_year_window: "Early Life",
+    at_five_year_boundary: "Reaches planning window in year five",
+    enters_within_five_years: "Enters planning window within five years",
+    at_or_beyond_upper_lifespan: "At or beyond upper end of planning window",
+    in_planning_window: "In planning window now"
+  };
+  const waterRange = waterTiming === "outside_five_year_window" ? [0, 0] : null;
+  const waterBasisLabel = waterAgeBasis === "if_original" ? " if original" : "";
+  const waterAgeNote = waterAge === null ? "" : ` Estimated age: ${waterAge} years${waterBasisLabel}.`;
 
   addCore(
     "Water Heater",
-    "8–12 yrs",
-    whStatus,
-    rangeFromClaim(costs.waterHeater, waterClaim, [0, 500], [0, 750]),
-    appendWhy("Common high-turn item; verify install date.", waterClaim),
-    waterClaim
-      ? "Verify install date, receipt, label photo, and permit if required."
-      : "Install date/label, venting, expansion tank, pan/drain, permit if replaced."
+    waterIsTankless ? "Not assessed" : "8–12 yrs",
+    waterTiming,
+    waterRange,
+    `${waterTimingLabels[waterTiming]}${waterBasisLabel}.${waterAgeNote}`,
+    "Confirm heater type, installation date, and condition. Service history does not establish a replacement date."
   );
+  Object.assign(planCore[planCore.length - 1], {
+    lifecycleLabel: waterTimingLabels[waterTiming] + waterBasisLabel,
+    ageBasis: waterAgeBasis,
+    referenceYear: waterReferenceYear,
+    ageYears: waterAge,
+    ageInFiveYears: waterAge === null ? null : waterAge + waterHorizon,
+    replacementWindowStartYear: waterIsTankless || waterReferenceYear === null
+      ? null : waterReferenceYear + waterAgeMin,
+    replacementWindowEndYear: waterIsTankless || waterReferenceYear === null
+      ? null : waterReferenceYear + waterAgeMax,
+    replacementCostReference: waterIsTankless
+      ? null : { low: costs.waterHeater[0], high: costs.waterHeater[1] },
+    exposureStatus: waterRange ? "not_in_window_based_on_age" : "not_priced"
+  });
 
   let elecStatus = "unknown";
   if (yrs !== null){
@@ -274,7 +321,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     ),
     elecClaim
       ? "Verify panel type, amps, invoice, and permit/final if upgraded."
-      : "Panel type/amps, grounding/bonding, aluminum wiring (if applicable), GFCI/AFCI where required."
+      : "Panel type, amps, grounding/bonding, aluminum wiring (if applicable), GFCI/AFCI where required."
   );
 
   let plumbStatus = "unknown";
@@ -376,12 +423,12 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       ? `Adjusted by Ask BlueVera claim: ${bathClaim.raw}`
       : (
           olderHome
-            ? "Common upgrade on older homes if finishes are original or worn."
+            ? "Common upgrade on older homes if not previously updated."
             : "Optional improvement depending on finishes/condition."
         ),
     bathClaim
-      ? "Verify scope, waterproofing, ventilation, plumbing work, and any permit history."
-      : "Verify shower pan/waterproofing, ventilation, plumbing fixtures, and any permit history if walls were opened."
+      ? "Verify scope, waterproofing, plumbing work, and any permit history."
+      : "Verify shower pan/waterproofing, ventilation, plumbing fixtures, and condition before budgeting."
   );
 
   let flooringRange = rangeFlooring(sf);
@@ -397,7 +444,7 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
       ? `Adjusted by Ask BlueVera claim: ${flooringClaim.raw}`
       : "Often replaced after purchase based on wear or buyer preference (cost scales with square footage).",
     flooringClaim
-      ? "Verify material, installation quality, moisture issues, subfloor condition, and whether flooring was part of a larger remodel."
+      ? "Verify what flooring was actually updated and whether it was part of a larger remodel."
       : "Confirm subfloor condition, moisture issues, and material type/installation."
   );
 
@@ -406,15 +453,15 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
     "Varies",
     rangeInteriorPaint(sf),
     "Common post-close refresh depending on condition and preference (scales with square footage).",
-    "Check for repairs needed (cracks, water stains) before repaint."
+    "Check for repairs needed (cracks, moisture stains) before repaint."
   );
 
   addOptional(
     "Exterior / Site allowance (Optional)",
     "Varies",
     rangeExteriorAllowance(bigHouse),
-    "Covers typical exterior refresh items (landscape/irrigation, fence, minor stucco/trim, grading/drainage touch-ups).",
-    "Walk exterior for drainage, cracking, irrigation leaks; check roof drainage/downspouts and lot grading."
+    "Covers typical exterior refresh items (landscape/irrigation, fence, grading/drainage touch-ups).",
+    "Walk exterior for drainage, grading, fence condition, stucco cracks, and irrigation leaks."
   );
 
   let poolInstallRange = rangePoolInstall();
@@ -438,6 +485,13 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   let totalHigh = 0;
 
   planCore.forEach(p => {
+    if (p.system === "Water Heater") {
+      if (waterRange) {
+        totalLow += waterRange[0];
+        totalHigh += waterRange[1];
+      }
+      return;
+    }
     const include = (
       p.status === "high" ||
       p.status === "med" ||
@@ -481,8 +535,11 @@ function buildCapitalPlan(builtYear, age, permitCount, sqft, claims){
   return {
     planCore,
     planOptional,
-    totalLow,
-    totalHigh,
+    // Do not present an unpriced water-heater contribution as a complete total.
+    totalLow: waterRange ? totalLow : null,
+    totalHigh: waterRange ? totalHigh : null,
+    subtotalExcludingUnpricedSystems: { low: totalLow, high: totalHigh },
+    unpricedSystems: waterRange ? [] : ["Water Heater"],
     reserveLow,
     reserveHigh,
     lowPermits,
@@ -610,6 +667,10 @@ function qualifyingWork(system, summary) {
   }
 
   if (system === 'waterheater') {
+    // Dated work on a component is not a full water heater replacement.
+    if (/\b(repair(?:ed|s)?|heating element|thermostat|anode|valve|ignit(?:er|or)|burner|gas control|dip tube|sensor|expansion tank)\b/.test(text)) {
+      return /\b(?:entire|full|complete|whole)\s+(?:tankless\s+)?water\s*heater\b.{0,35}\b(?:replaced|replacement|installed)\b|\b(?:replaced|replacement of|installed)\s+(?:the\s+)?(?:entire|full|complete|whole)\s+(?:tankless\s+)?water\s*heater\b/.test(text);
+    }
     return /\b(replaced|replacement|installed|new water heater|new tankless)\b/.test(text);
   }
 
@@ -869,7 +930,7 @@ async function handler(req, res) {
         : 'baseline_only',
       historyStatus,
       appliedRecordCount: claims.length,
-      version: '2026-10-29-server-v4-dated-work',
+      version: 'server-v5-water-heater-timing-pilot',
       propertyFacts: {
         builtYear: year,
         age,
