@@ -1,172 +1,206 @@
 
 /**
- * BlueVera — Read-only ARMLS Roof Diagnostic
- * Deploy as: bluevera.app/api/armls-roof-diagnostic.js
+ * BlueVera — ARMLS Roof Diagnostic
+ * File: api/armls-roof-diagnostic.js
  *
- * Required Vercel environment variables:
- *   SPARK_ACCESS_TOKEN       (existing licensed ARMLS Spark token)
- *   ARMLS_DIAGNOSTIC_KEY     (NEW, random independent access key)
- *
- * Test (do not share the secret URL publicly):
- *   /api/armls-roof-diagnostic?mls=7103560&key=YOUR_DIAGNOSTIC_KEY
- *
- * This endpoint NEVER writes to Supabase, never logs credentials,
- * and never returns the full listing or private remarks.
+ * READ ONLY
+ * Uses existing environment variables:
+ * SPARK_ACCESS_TOKEN
+ * BLUEVERA_INTERNAL_API_KEY
  */
-import crypto from 'node:crypto';
 
-const SPARK_BASE = 'https://replication.sparkapi.com/v1';
-const SAFE_MAX_DEPTH = 9;
-const SAFE_MAX_NODES = 5000;
+import crypto from "node:crypto";
 
-function constantTimeEqual(a, b) {
+const SPARK_BASE =
+  "https://replication.sparkapi.com/v1";
+
+function secureMatch(a, b) {
   if (!a || !b) return false;
-  const left = crypto.createHash('sha256').update(String(a)).digest();
-  const right = crypto.createHash('sha256').update(String(b)).digest();
+
+  const left = crypto
+    .createHash("sha256")
+    .update(String(a))
+    .digest();
+
+  const right = crypto
+    .createHash("sha256")
+    .update(String(b))
+    .digest();
+
   return crypto.timingSafeEqual(left, right);
 }
 
 function safeValue(value) {
-  if (value == null) return null;
-  if (typeof value === 'string') return value.slice(0, 300);
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  if (Array.isArray(value)) return value.slice(0, 20).map(safeValue);
+  if (value === null || value === undefined)
+    return null;
 
-  // Some Spark enum fields are structured objects; keep only compact, safe values.
-  if (typeof value === 'object') {
-    const out = {};
-    for (const [key, item] of Object.entries(value).slice(0, 15)) {
-      if (/^(value|values|name|label|description|displayvalue|id)$/i.test(key)) {
-        out[key] = safeValue(item);
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return typeof value === "string"
+      ? value.slice(0, 300)
+      : value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map(safeValue);
+  }
+
+  if (typeof value === "object") {
+    const result = {};
+
+    for (const [key, item] of Object.entries(value)) {
+      if (
+        /^(value|values|label|name|description|displayvalue)$/i
+          .test(key)
+      ) {
+        result[key] = safeValue(item);
       }
     }
-    return Object.keys(out).length ? out : '[structured value]';
+
+    return Object.keys(result).length
+      ? result
+      : "[structured value]";
   }
-  return String(value).slice(0, 300);
+
+  return null;
 }
 
-function findRoofFields(source, sourceLabel) {
-  const out = [];
-  let visited = 0;
-  const seen = new WeakSet();
+function findRoofFields(source, sourceName) {
+  const results = [];
+  const visited = new WeakSet();
+  let count = 0;
 
-  function visit(node, path, depth) {
+  function scan(node, path, depth) {
     if (
-      node == null ||
-      typeof node !== 'object' ||
-      depth > SAFE_MAX_DEPTH ||
-      ++visited > SAFE_MAX_NODES
+      !node ||
+      typeof node !== "object" ||
+      depth > 9 ||
+      ++count > 5000
     ) return;
 
-    if (seen.has(node)) return;
-    seen.add(node);
+    if (visited.has(node)) return;
+    visited.add(node);
 
     if (Array.isArray(node)) {
-      node.slice(0, 100).forEach((item, i) =>
-        visit(item, `${path}[${i}]`, depth + 1)
-      );
+      node.slice(0, 100).forEach((item, index) => {
+        scan(item, `${path}[${index}]`, depth + 1);
+      });
       return;
     }
 
-    for (const [name, value] of Object.entries(node)) {
-      // Only roof-specific keys, not whole records or remarks.
-      if (/roof|roofing|underlay|underlayment/i.test(name)) {
-        out.push({
-          field: name,
-          path: `${path}.${name}`,
+    for (const [key, value] of Object.entries(node)) {
+      if (/roof|roofing|underlay/i.test(key)) {
+        results.push({
+          field: key,
+          path: `${path}.${key}`,
           value: safeValue(value),
-          source: sourceLabel
+          source: sourceName
         });
       }
 
-      if (value !== null && typeof value === 'object') {
-        visit(value, `${path}.${name}`, depth + 1);
+      if (value && typeof value === "object") {
+        scan(value, `${path}.${key}`, depth + 1);
       }
     }
   }
 
-  visit(source, sourceLabel, 0);
-  return out.slice(0, 100);
+  scan(source, sourceName, 0);
+  return results.slice(0, 100);
 }
 
-function firstMatching(fields, patterns) {
-  const match = fields.find(item =>
-    patterns.some(re => re.test(item.field)) &&
+function findMatch(fields, patterns) {
+  return fields.find(item =>
+    patterns.some(pattern =>
+      pattern.test(item.field)
+    ) &&
     item.value !== null &&
-    item.value !== ''
-  );
-
-  return match
-    ? { value: match.value, field: match.field, path: match.path }
-    : null;
+    item.value !== ""
+  ) || null;
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-
-  if (req.method !== 'GET') {
-    return res.status(405).json({
-      success: false,
-      error: 'Method not allowed'
-    });
-  }
-
-  const configuredKey = process.env.ARMLS_DIAGNOSTIC_KEY;
-
-  if (!configuredKey) {
-    return res.status(503).json({
-      success: false,
-      error: 'Diagnostic access is not configured'
-    });
-  }
-
-  const suppliedKey = String(
-    req.headers['x-bluevera-diagnostic-key'] ||
-    req.query.key ||
-    ''
+  res.setHeader(
+    "Cache-Control",
+    "private, no-store, max-age=0"
   );
 
-  if (!constantTimeEqual(suppliedKey, configuredKey)) {
-    return res.status(401).json({
+  res.setHeader(
+    "X-Content-Type-Options",
+    "nosniff"
+  );
+
+  if (req.method !== "GET") {
+    return res.status(405).json({
       success: false,
-      error: 'Unauthorized'
+      error: "Method not allowed"
     });
   }
 
-  const mls = String(req.query.mls || '').trim();
+  const expectedKey =
+    process.env.BLUEVERA_INTERNAL_API_KEY;
+
+  const providedKey = String(
+    req.headers["x-bluevera-internal-key"] || ""
+  );
+
+  if (!expectedKey) {
+    return res.status(503).json({
+      success: false,
+      error: "Internal API key not configured"
+    });
+  }
+
+  if (!secureMatch(providedKey, expectedKey)) {
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized"
+    });
+  }
+
+  const mls = String(req.query.mls || "").trim();
 
   if (!/^\d{5,12}$/.test(mls)) {
     return res.status(400).json({
       success: false,
-      error: 'Provide a numeric MLS number'
+      error: "Invalid MLS number"
     });
   }
 
-  const sparkToken = process.env.SPARK_ACCESS_TOKEN;
+  const sparkToken =
+    process.env.SPARK_ACCESS_TOKEN;
 
   if (!sparkToken) {
     return res.status(503).json({
       success: false,
-      error: 'Spark connection is not configured'
+      error: "Spark token not configured"
     });
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    12000
+  );
 
   try {
+    const filter = encodeURIComponent(
+      `ListingId Eq '${mls}'`
+    );
+
     const url =
-      `${SPARK_BASE}/listings?_filter=${
-        encodeURIComponent(`ListingId Eq '${mls}'`)
-      }&_limit=1&_expand=CustomFields`;
+      `${SPARK_BASE}/listings` +
+      `?_filter=${filter}` +
+      `&_limit=1` +
+      `&_expand=CustomFields`;
 
     const response = await fetch(url, {
-      method: 'GET',
+      method: "GET",
       headers: {
         Authorization: `Bearer ${sparkToken}`,
-        Accept: 'application/json'
+        Accept: "application/json"
       },
       signal: controller.signal
     });
@@ -174,7 +208,7 @@ export default async function handler(req, res) {
     if (!response.ok) {
       return res.status(502).json({
         success: false,
-        error: 'Spark listing request failed',
+        error: "Spark request failed",
         sparkStatus: response.status
       });
     }
@@ -190,8 +224,8 @@ export default async function handler(req, res) {
     if (!listing) {
       return res.status(404).json({
         success: false,
-        mlsNumber: mls,
-        error: 'Listing not found or not permitted by feed'
+        error: "Listing not found",
+        mlsNumber: mls
       });
     }
 
@@ -207,38 +241,36 @@ export default async function handler(req, res) {
       standard.customFields ||
       {};
 
-    const standardRoofFields = findRoofFields(
+    const standardRoof = findRoofFields(
       standard,
-      'StandardFields'
+      "StandardFields"
     );
 
-    const customRoofFields = findRoofFields(
+    const customRoof = findRoofFields(
       custom,
-      'CustomFields'
+      "CustomFields"
     );
 
-    const allFields = [
-      ...standardRoofFields,
-      ...customRoofFields
+    const allRoof = [
+      ...standardRoof,
+      ...customRoof
     ];
 
     return res.status(200).json({
       success: true,
-      mode: 'READ_ONLY_ROOF_DIAGNOSTIC',
+      mode: "READ_ONLY_ROOF_DIAGNOSTIC",
       mlsNumber: mls,
 
       property: {
         city: standard.City || null,
-        state:
-          standard.StateOrProvince ||
-          standard.State ||
-          null,
+        state: standard.StateOrProvince || null,
         zip: standard.PostalCode || null,
-        yearBuiltFromMLS: standard.YearBuilt ?? null
+        yearBuiltFromMLS:
+          standard.YearBuilt ?? null
       },
 
       roof: {
-        material: firstMatching(allFields, [
+        material: findMatch(allRoof, [
           /^roofing$/i,
           /^roofmaterial$/i,
           /^roofingmaterial$/i,
@@ -246,40 +278,42 @@ export default async function handler(req, res) {
           /^roofcovering/i
         ]),
 
-        yearUpdated: firstMatching(allFields, [
+        yearUpdated: findMatch(allRoof, [
           /roof\s*yr\s*updated/i,
           /roof.*year.*updated/i,
           /roof.*updated.*year/i,
           /^roof_year$/i
         ]),
 
-        partialOrFull: firstMatching(allFields, [
+        partialOrFull: findMatch(allRoof, [
           /roof\s*partial\s*\/\s*full/i,
           /roof.*partial.*full/i,
           /^roof_scope$/i
         ]),
 
-        otherRoofFields: allFields
+        allRoofFields: allRoof
       },
 
       diagnostics: {
-        standardRoofFieldCount: standardRoofFields.length,
-        customRoofFieldCount: customRoofFields.length,
-        hasStandardFields: Object.keys(standard).length > 0,
-        hasCustomFields: Object.keys(custom).length > 0,
-        note:
-          'Fields are listing-reported. A field on the ARMLS input form is not necessarily populated in a specific listing or available in this licensed response.'
-      },
+        standardRoofFieldCount:
+          standardRoof.length,
 
-      writesToDatabase: false
+        customRoofFieldCount:
+          customRoof.length,
+
+        hasCustomFields:
+          Object.keys(custom).length > 0,
+
+        writesToDatabase: false
+      }
     });
 
   } catch (error) {
     return res.status(502).json({
       success: false,
-      error: error.name === 'AbortError'
-        ? 'Spark request timed out'
-        : 'Unable to complete Spark diagnostic'
+      error: error.name === "AbortError"
+        ? "Spark request timed out"
+        : "Unable to complete roof diagnostic"
     });
 
   } finally {
