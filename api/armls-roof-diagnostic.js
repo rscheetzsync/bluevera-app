@@ -1,62 +1,80 @@
-
 /**
- * BlueVera — ARMLS Roof Diagnostic
+ * BLUEVERA — ARMLS ROOF DIAGNOSTIC
+ *
  * File: api/armls-roof-diagnostic.js
  *
- * READ ONLY
- * Uses existing environment variables:
- * SPARK_ACCESS_TOKEN
- * BLUEVERA_INTERNAL_API_KEY
+ * PURPOSE:
+ * Read roofing information directly from ARMLS Spark.
+ *
+ * Uses existing:
+ *   SPARK_ACCESS_TOKEN
+ *
+ * TEST URL:
+ * https://bluevera.app/api/armls-roof-diagnostic?mls=7103560
+ *
+ * READ ONLY:
+ * - No Supabase connection
+ * - No database updates
+ * - No map changes
+ * - No Full Report changes
+ * - No Capital Exposure changes
+ *
+ * SECURITY:
+ * - Temporarily restricted to MLS 7103560
+ * - Returns roofing fields only
+ * - Does not expose Spark token
+ * - Does not return private listing remarks
+ *
+ * REMOVE THIS DIAGNOSTIC AFTER TESTING.
  */
 
-import crypto from "node:crypto";
+const SPARK_BASE = "https://replication.sparkapi.com/v1";
 
-const SPARK_BASE =
-  "https://replication.sparkapi.com/v1";
+const TEST_MLS = "7103560";
 
-function secureMatch(a, b) {
-  if (!a || !b) return false;
+const ROOF_PATTERN =
+  /roof|roofing|underlay|underlayment/i;
 
-  const left = crypto
-    .createHash("sha256")
-    .update(String(a))
-    .digest();
-
-  const right = crypto
-    .createHash("sha256")
-    .update(String(b))
-    .digest();
-
-  return crypto.timingSafeEqual(left, right);
-}
-
-function safeValue(value) {
-  if (value === null || value === undefined)
+function compactValue(value, depth = 0) {
+  if (value === null || value === undefined) {
     return null;
+  }
+
+  if (typeof value === "string") {
+    return value.slice(0, 250);
+  }
 
   if (
-    typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "boolean"
   ) {
-    return typeof value === "string"
-      ? value.slice(0, 300)
-      : value;
+    return value;
+  }
+
+  if (depth >= 3) {
+    return "[nested value]";
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, 20).map(safeValue);
+    return value.slice(0, 20).map(item =>
+      compactValue(item, depth + 1)
+    );
   }
 
   if (typeof value === "object") {
     const result = {};
 
-    for (const [key, item] of Object.entries(value)) {
+    for (const [key, item] of
+      Object.entries(value).slice(0, 15)) {
+
       if (
-        /^(value|values|label|name|description|displayvalue)$/i
+        /^(value|values|name|label|description|displayvalue|id|text)$/i
           .test(key)
       ) {
-        result[key] = safeValue(item);
+        result[key] = compactValue(
+          item,
+          depth + 1
+        );
       }
     }
 
@@ -68,63 +86,163 @@ function safeValue(value) {
   return null;
 }
 
-function findRoofFields(source, sourceName) {
-  const results = [];
+function scanRoofFields(source, sourceName) {
+  const found = [];
   const visited = new WeakSet();
-  let count = 0;
 
-  function scan(node, path, depth) {
+  let scanned = 0;
+
+  function visit(node, path, depth) {
     if (
-      !node ||
+      node === null ||
       typeof node !== "object" ||
-      depth > 9 ||
-      ++count > 5000
-    ) return;
-
-    if (visited.has(node)) return;
-    visited.add(node);
-
-    if (Array.isArray(node)) {
-      node.slice(0, 100).forEach((item, index) => {
-        scan(item, `${path}[${index}]`, depth + 1);
-      });
+      depth > 10 ||
+      scanned >= 5000
+    ) {
       return;
     }
 
+    if (visited.has(node)) {
+      return;
+    }
+
+    visited.add(node);
+    scanned++;
+
+    if (Array.isArray(node)) {
+      node.slice(0, 200).forEach((item, index) => {
+        visit(
+          item,
+          `${path}[${index}]`,
+          depth + 1
+        );
+      });
+
+      return;
+    }
+
+    // Handle Spark fields represented as:
+    // { Name: "Roof Yr Updated", Value: "2020" }
+    const label =
+      node.Name ||
+      node.name ||
+      node.Label ||
+      node.label ||
+      node.FieldName ||
+      node.fieldName;
+
+    if (
+      typeof label === "string" &&
+      ROOF_PATTERN.test(label)
+    ) {
+      const value =
+        node.Value ??
+        node.value ??
+        node.DisplayValue ??
+        node.displayValue ??
+        node.Values ??
+        node.values ??
+        null;
+
+      found.push({
+        field: label,
+        value: compactValue(value),
+        source: sourceName,
+        path
+      });
+    }
+
     for (const [key, value] of Object.entries(node)) {
-      if (/roof|roofing|underlay/i.test(key)) {
-        results.push({
+      const fieldPath = `${path}.${key}`;
+
+      if (ROOF_PATTERN.test(key)) {
+        found.push({
           field: key,
-          path: `${path}.${key}`,
-          value: safeValue(value),
-          source: sourceName
+          value: compactValue(value),
+          source: sourceName,
+          path: fieldPath
         });
       }
 
-      if (value && typeof value === "object") {
-        scan(value, `${path}.${key}`, depth + 1);
+      if (
+        value !== null &&
+        typeof value === "object"
+      ) {
+        visit(
+          value,
+          fieldPath,
+          depth + 1
+        );
       }
     }
   }
 
-  scan(source, sourceName, 0);
-  return results.slice(0, 100);
+  visit(source, sourceName, 0);
+
+  // Remove duplicate field/path entries.
+  const unique = new Map();
+
+  for (const item of found) {
+    unique.set(
+      `${item.source}|${item.path}|${item.field}`,
+      item
+    );
+  }
+
+  return Array.from(unique.values()).slice(0, 100);
 }
 
-function findMatch(fields, patterns) {
-  return fields.find(item =>
+function findField(fields, patterns) {
+  const item = fields.find(entry =>
     patterns.some(pattern =>
-      pattern.test(item.field)
+      pattern.test(entry.field)
     ) &&
-    item.value !== null &&
-    item.value !== ""
-  ) || null;
+    entry.value !== null &&
+    entry.value !== ""
+  );
+
+  return item || null;
+}
+
+function extractRoofDetails(fields) {
+  return {
+    roofingMaterial: findField(fields, [
+      /^roofing$/i,
+      /^roofing material$/i,
+      /^roof material$/i,
+      /^roof type$/i,
+      /^roof covering$/i,
+      /^roofmaterial$/i,
+      /^roofingmaterial$/i
+    ]),
+
+    roofYearUpdated: findField(fields, [
+      /^roof yr updated$/i,
+      /^roof year updated$/i,
+      /^roof updated year$/i,
+      /^roof_year$/i,
+      /^roofyearupdated$/i
+    ]),
+
+    roofPartialOrFull: findField(fields, [
+      /^roof partial\/full$/i,
+      /^roof partial or full$/i,
+      /^roof replacement scope$/i,
+      /^roof scope$/i,
+      /^roofpartialfull$/i
+    ]),
+
+    underlayment: findField(fields, [
+      /underlay/i,
+      /underlayment/i
+    ])
+  };
 }
 
 export default async function handler(req, res) {
   res.setHeader(
     "Cache-Control",
-    "private, no-store, max-age=0"
+    "no-store, max-age=0"
   );
 
   res.setHeader(
@@ -133,39 +251,22 @@ export default async function handler(req, res) {
   );
 
   if (req.method !== "GET") {
+    res.setHeader("Allow", "GET");
+
     return res.status(405).json({
       success: false,
-      error: "Method not allowed"
+      error: "GET requests only"
     });
   }
 
-  const expectedKey =
-    process.env.BLUEVERA_INTERNAL_API_KEY;
+  const mls = String(
+    req.query?.mls || ""
+  ).trim();
 
-  const providedKey = String(
-    req.headers["x-bluevera-internal-key"] || ""
-  );
-
-  if (!expectedKey) {
-    return res.status(503).json({
+  if (mls !== TEST_MLS) {
+    return res.status(403).json({
       success: false,
-      error: "Internal API key not configured"
-    });
-  }
-
-  if (!secureMatch(providedKey, expectedKey)) {
-    return res.status(401).json({
-      success: false,
-      error: "Unauthorized"
-    });
-  }
-
-  const mls = String(req.query.mls || "").trim();
-
-  if (!/^\d{5,12}$/.test(mls)) {
-    return res.status(400).json({
-      success: false,
-      error: "Invalid MLS number"
+      error: "Temporary diagnostic restricted to MLS 7103560"
     });
   }
 
@@ -173,13 +274,14 @@ export default async function handler(req, res) {
     process.env.SPARK_ACCESS_TOKEN;
 
   if (!sparkToken) {
-    return res.status(503).json({
+    return res.status(500).json({
       success: false,
-      error: "Spark token not configured"
+      error: "SPARK_ACCESS_TOKEN is missing"
     });
   }
 
   const controller = new AbortController();
+
   const timeout = setTimeout(
     () => controller.abort(),
     12000
@@ -196,7 +298,7 @@ export default async function handler(req, res) {
       `&_limit=1` +
       `&_expand=CustomFields`;
 
-    const response = await fetch(url, {
+    const sparkResponse = await fetch(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${sparkToken}`,
@@ -205,27 +307,30 @@ export default async function handler(req, res) {
       signal: controller.signal
     });
 
-    if (!response.ok) {
+    if (!sparkResponse.ok) {
       return res.status(502).json({
         success: false,
-        error: "Spark request failed",
-        sparkStatus: response.status
+        error: "ARMLS Spark request failed",
+        sparkStatus: sparkResponse.status
       });
     }
 
-    const payload = await response.json();
+    const payload = await sparkResponse.json();
 
-    const listing = Array.isArray(payload?.D?.Results)
-      ? payload.D.Results[0]
-      : Array.isArray(payload?.Results)
-        ? payload.Results[0]
-        : null;
+    const results =
+      payload?.D?.Results ||
+      payload?.Results ||
+      [];
+
+    const listing = Array.isArray(results)
+      ? results[0]
+      : null;
 
     if (!listing) {
       return res.status(404).json({
         success: false,
-        error: "Listing not found",
-        mlsNumber: mls
+        mlsNumber: mls,
+        error: "MLS listing not found in Spark response"
       });
     }
 
@@ -236,84 +341,80 @@ export default async function handler(req, res) {
 
     const custom =
       listing.CustomFields ||
-      standard.CustomFields ||
       listing.customFields ||
+      standard.CustomFields ||
       standard.customFields ||
       {};
 
-    const standardRoof = findRoofFields(
+    const standardRoofFields = scanRoofFields(
       standard,
       "StandardFields"
     );
 
-    const customRoof = findRoofFields(
+    const customRoofFields = scanRoofFields(
       custom,
       "CustomFields"
     );
 
-    const allRoof = [
-      ...standardRoof,
-      ...customRoof
+    const allRoofFields = [
+      ...standardRoofFields,
+      ...customRoofFields
     ];
+
+    const roofDetails = extractRoofDetails(
+      allRoofFields
+    );
 
     return res.status(200).json({
       success: true,
-      mode: "READ_ONLY_ROOF_DIAGNOSTIC",
+
+      diagnostic: "ARMLS ROOF DATA",
+
+      mode: "READ_ONLY",
+
       mlsNumber: mls,
 
       property: {
         city: standard.City || null,
-        state: standard.StateOrProvince || null,
+        state:
+          standard.StateOrProvince ||
+          standard.State ||
+          null,
         zip: standard.PostalCode || null,
         yearBuiltFromMLS:
           standard.YearBuilt ?? null
       },
 
-      roof: {
-        material: findMatch(allRoof, [
-          /^roofing$/i,
-          /^roofmaterial$/i,
-          /^roofingmaterial$/i,
-          /^rooftype$/i,
-          /^roofcovering/i
-        ]),
+      roof: roofDetails,
 
-        yearUpdated: findMatch(allRoof, [
-          /roof\s*yr\s*updated/i,
-          /roof.*year.*updated/i,
-          /roof.*updated.*year/i,
-          /^roof_year$/i
-        ]),
+      allRoofFields,
 
-        partialOrFull: findMatch(allRoof, [
-          /roof\s*partial\s*\/\s*full/i,
-          /roof.*partial.*full/i,
-          /^roof_scope$/i
-        ]),
+      fieldCounts: {
+        standardRoofFields:
+          standardRoofFields.length,
 
-        allRoofFields: allRoof
+        customRoofFields:
+          customRoofFields.length,
+
+        totalRoofFields:
+          allRoofFields.length
       },
 
-      diagnostics: {
-        standardRoofFieldCount:
-          standardRoof.length,
+      note:
+        "Roofing data is read directly from Spark. Missing fields may be unpopulated or unavailable through this feed.",
 
-        customRoofFieldCount:
-          customRoof.length,
+      databaseUpdated: false,
 
-        hasCustomFields:
-          Object.keys(custom).length > 0,
-
-        writesToDatabase: false
-      }
+      capitalExposureUpdated: false
     });
 
   } catch (error) {
     return res.status(502).json({
       success: false,
-      error: error.name === "AbortError"
-        ? "Spark request timed out"
-        : "Unable to complete roof diagnostic"
+      error:
+        error.name === "AbortError"
+          ? "Spark request timed out"
+          : "Unable to retrieve Spark roof data"
     });
 
   } finally {
