@@ -29,7 +29,7 @@
 const SPARK_BASE =
   "https://replication.sparkapi.com/v1";
 
-const TEST_MLS = "7053552";
+const TEST_MLS = "7045718";
 
 // Search for different names ARMLS may use
 // for water heater information.
