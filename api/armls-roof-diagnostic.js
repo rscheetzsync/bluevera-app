@@ -1,47 +1,47 @@
+
 /**
  * BLUEVERA — ARMLS ROOF DIAGNOSTIC
  *
  * File: api/armls-roof-diagnostic.js
  *
- * PURPOSE:
- * Read roofing information directly from ARMLS Spark.
+ * VERSION 2 — DISPLAY ACTUAL ROOFING VALUES
  *
- * Uses existing:
- *   SPARK_ACCESS_TOKEN
+ * Read-only diagnostic for MLS #7103560.
  *
- * TEST URL:
- * https://bluevera.app/api/armls-roof-diagnostic?mls=7103560
+ * Existing environment variable:
+ * SPARK_ACCESS_TOKEN
  *
- * READ ONLY:
- * - No Supabase connection
- * - No database updates
- * - No map changes
- * - No Full Report changes
- * - No Capital Exposure changes
+ * No Supabase writes.
+ * No map, report, or capital exposure changes.
  *
- * SECURITY:
- * - Temporarily restricted to MLS 7103560
- * - Returns roofing fields only
- * - Does not expose Spark token
- * - Does not return private listing remarks
- *
- * REMOVE THIS DIAGNOSTIC AFTER TESTING.
+ * TEMPORARY DIAGNOSTIC:
+ * Restrict public access or remove after testing.
  */
 
-const SPARK_BASE = "https://replication.sparkapi.com/v1";
+const SPARK_BASE =
+  "https://replication.sparkapi.com/v1";
 
 const TEST_MLS = "7103560";
 
 const ROOF_PATTERN =
   /roof|roofing|underlay|underlayment/i;
 
+/**
+ * Preserve the actual values of Spark roofing fields.
+ *
+ * IMPORTANT CHANGE:
+ * Previously, nested objects became "[structured value]".
+ * Now we recursively return their contents.
+ *
+ * Limits protect against excessive response sizes.
+ */
 function compactValue(value, depth = 0) {
   if (value === null || value === undefined) {
     return null;
   }
 
   if (typeof value === "string") {
-    return value.slice(0, 250);
+    return value.slice(0, 1000);
   }
 
   if (
@@ -51,12 +51,12 @@ function compactValue(value, depth = 0) {
     return value;
   }
 
-  if (depth >= 3) {
-    return "[nested value]";
+  if (depth >= 6) {
+    return "[maximum depth reached]";
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, 20).map(item =>
+    return value.slice(0, 50).map(item =>
       compactValue(item, depth + 1)
     );
   }
@@ -65,27 +65,24 @@ function compactValue(value, depth = 0) {
     const result = {};
 
     for (const [key, item] of
-      Object.entries(value).slice(0, 15)) {
+      Object.entries(value).slice(0, 50)) {
 
-      if (
-        /^(value|values|name|label|description|displayvalue|id|text)$/i
-          .test(key)
-      ) {
-        result[key] = compactValue(
-          item,
-          depth + 1
-        );
-      }
+      result[key] = compactValue(
+        item,
+        depth + 1
+      );
     }
 
-    return Object.keys(result).length
-      ? result
-      : "[structured value]";
+    return result;
   }
 
-  return null;
+  return String(value);
 }
 
+/**
+ * Find all roof-related fields within the
+ * StandardFields and CustomFields objects.
+ */
 function scanRoofFields(source, sourceName) {
   const found = [];
   const visited = new WeakSet();
@@ -121,8 +118,7 @@ function scanRoofFields(source, sourceName) {
       return;
     }
 
-    // Handle Spark fields represented as:
-    // { Name: "Roof Yr Updated", Value: "2020" }
+    // Support label/value formatted Spark fields.
     const label =
       node.Name ||
       node.name ||
@@ -179,7 +175,6 @@ function scanRoofFields(source, sourceName) {
 
   visit(source, sourceName, 0);
 
-  // Remove duplicate field/path entries.
   const unique = new Map();
 
   for (const item of found) {
@@ -193,15 +188,13 @@ function scanRoofFields(source, sourceName) {
 }
 
 function findField(fields, patterns) {
-  const item = fields.find(entry =>
+  return fields.find(entry =>
     patterns.some(pattern =>
       pattern.test(entry.field)
     ) &&
     entry.value !== null &&
     entry.value !== ""
-  );
-
-  return item || null;
+  ) || null;
 }
 
 function extractRoofDetails(fields) {
@@ -266,7 +259,8 @@ export default async function handler(req, res) {
   if (mls !== TEST_MLS) {
     return res.status(403).json({
       success: false,
-      error: "Temporary diagnostic restricted to MLS 7103560"
+      error:
+        "Diagnostic restricted to MLS 7103560"
     });
   }
 
@@ -276,7 +270,8 @@ export default async function handler(req, res) {
   if (!sparkToken) {
     return res.status(500).json({
       success: false,
-      error: "SPARK_ACCESS_TOKEN is missing"
+      error:
+        "SPARK_ACCESS_TOKEN is missing"
     });
   }
 
@@ -301,7 +296,8 @@ export default async function handler(req, res) {
     const sparkResponse = await fetch(url, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${sparkToken}`,
+        Authorization:
+          `Bearer ${sparkToken}`,
         Accept: "application/json"
       },
       signal: controller.signal
@@ -310,12 +306,15 @@ export default async function handler(req, res) {
     if (!sparkResponse.ok) {
       return res.status(502).json({
         success: false,
-        error: "ARMLS Spark request failed",
-        sparkStatus: sparkResponse.status
+        error:
+          "ARMLS Spark request failed",
+        sparkStatus:
+          sparkResponse.status
       });
     }
 
-    const payload = await sparkResponse.json();
+    const payload =
+      await sparkResponse.json();
 
     const results =
       payload?.D?.Results ||
@@ -330,7 +329,8 @@ export default async function handler(req, res) {
       return res.status(404).json({
         success: false,
         mlsNumber: mls,
-        error: "MLS listing not found in Spark response"
+        error:
+          "MLS listing not found in Spark response"
       });
     }
 
@@ -346,41 +346,48 @@ export default async function handler(req, res) {
       standard.customFields ||
       {};
 
-    const standardRoofFields = scanRoofFields(
-      standard,
-      "StandardFields"
-    );
+    const standardRoofFields =
+      scanRoofFields(
+        standard,
+        "StandardFields"
+      );
 
-    const customRoofFields = scanRoofFields(
-      custom,
-      "CustomFields"
-    );
+    const customRoofFields =
+      scanRoofFields(
+        custom,
+        "CustomFields"
+      );
 
     const allRoofFields = [
       ...standardRoofFields,
       ...customRoofFields
     ];
 
-    const roofDetails = extractRoofDetails(
-      allRoofFields
-    );
+    const roofDetails =
+      extractRoofDetails(allRoofFields);
 
     return res.status(200).json({
       success: true,
 
-      diagnostic: "ARMLS ROOF DATA",
+      diagnostic:
+        "ARMLS ROOF DATA — FULL VALUES",
 
       mode: "READ_ONLY",
 
       mlsNumber: mls,
 
       property: {
-        city: standard.City || null,
+        city:
+          standard.City || null,
+
         state:
           standard.StateOrProvince ||
           standard.State ||
           null,
-        zip: standard.PostalCode || null,
+
+        zip:
+          standard.PostalCode || null,
+
         yearBuiltFromMLS:
           standard.YearBuilt ?? null
       },
@@ -401,7 +408,7 @@ export default async function handler(req, res) {
       },
 
       note:
-        "Roofing data is read directly from Spark. Missing fields may be unpopulated or unavailable through this feed.",
+        "Roofing values are displayed directly from the ARMLS Spark response. No property records were changed.",
 
       databaseUpdated: false,
 
